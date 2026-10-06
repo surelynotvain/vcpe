@@ -1,9 +1,10 @@
 # VCPE: Vain's C Portable Engine
 
-A small game engine in plain C for the **Sony PlayStation Portable**, built for 2D demakes of PC games. It is the shared base of:
+A small game engine in plain C for the **Sony PlayStation Portable**, built for 2D demakes of PC games. This is **VCPE 1**, the base, used by:
 
 - [**Helltaker PSP**](https://github.com/surelynotvain/helltaker-psp): the full game plus Examtaker, on the VCPE base
-- [**Awaria PSP**](https://github.com/surelynotvain/awaria-psp): the full game, on VCPE 2 (the base plus a Unity-style runtime)
+
+VCPE 2 (the base plus a Unity-style runtime, used by Awaria PSP) and newer versions are on the [Releases page](https://github.com/surelynotvain/vcpe/releases).
 
 The engine gives a game the PSP side of things (startup, files, graphics, sound, testing) so the game code can focus on its own rules. No splash screen, no external engine, no dependencies beyond the PSPSDK.
 
@@ -12,7 +13,6 @@ The engine gives a game the PSP side of things (startup, files, graphics, sound,
 | Folder | What it is |
 |---|---|
 | [`src/`](src/) | **VCPE base**: system, data PAK, renderer, mixer, test harness |
-| [`vcpe2/`](vcpe2/) | **VCPE 2 advanced layer**: a small Unity-style runtime (scenes, Mecanim animator, 2D physics, A* pathfinding, particles), a script layer and a sprite and glyph-text renderer |
 | [`tools/`](tools/) | Python and C helpers for a game's data converter and for the XMB files |
 
 ### VCPE base (`src/`)
@@ -25,22 +25,6 @@ The engine gives a game the PSP side of things (startup, files, graphics, sound,
 | `vcpe_gfx` | GU setup and frames, texture bundles loaded and unloaded per scene, paletted (T4/T8) swizzled pages with their CLUTs, cached render state (page, blend, white, filter), textured quads, colour fills, strips, scissor clipping, per-frame stats |
 | `vcpe_audio` | Software mixer: up to 32 ADPCM sound effect voices (pitch, gain, loop, pause), streamed ADPCM music with fades, volume, ducking |
 | `vcpe_test` | `AUTOTEST.TXT` input scripts (`wait`, `press`, `hold`, `rec`, `quit` plus the game's own commands) with a fixed time step, and frame recording to `REC.RAW` for frame-exact regression tests |
-
-### VCPE 2 advanced layer (`vcpe2/`)
-
-| Files | What it does |
-|---|---|
-| `w_world`, `awfmt.h`, `w_hooks.h` | GameObjects, transforms, RectTransforms and components loaded from a converted scene blob; prefab instancing; SetActive |
-| `w_anim` | Mecanim: parameters, triggers, exit times, write defaults, curves bound to scene objects, animation events |
-| `w_phys` | Physics2D subset: Rigidbody2D, circle, box and capsule colliders, wall tiles, layer matrix, trigger and collision events, OverlapCircle, Raycast, CircleCast at a fixed 50 Hz |
-| `w_path` | A* grid pathfinding |
-| `w_render` | Draw list sorted like Unity (sorting layer, order in layer, custom Y axis): sprites, tilemaps, trails, lines, canvases |
-| `w_part` | ParticleSystem subset |
-| `g_core` | Script layer: behaviour tables per script type, game time and time scale, coroutines |
-| `prefs` | PlayerPrefs |
-| `aw_gfx` | Affine, tiled and sliced sprites, UI images and masks, SDF glyph text, language packs |
-
-VCPE 2 was written for Awaria first: some files still include that game's generated data header and script table. Making the layer fully game-independent is future work.
 
 ### Tools (`tools/`)
 
@@ -110,7 +94,7 @@ vcpe_obj/%.o: $(VCPE)/src/%.c
 
 ## Status
 
-Both games are built on this code and are covered by a frame-exact regression test (the same input script must give byte-identical frames before and after every engine change). Runs on PSP-2000, 3000, Street and Go, and in PPSSPP. PSP-1000 support depends on how much memory a game needs.
+Helltaker PSP is built on this code and is covered by a frame-exact regression test (the same input script must give byte-identical frames before and after every engine change). Runs on PSP-2000, 3000, Street and Go, and in PPSSPP. PSP-1000 support depends on how much memory a game needs.
 
 ## License
 
