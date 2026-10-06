@@ -7,4 +7,5 @@
 #include "vcpe_audio.h"
 #include "vcpe_test.h"
 #include "vcpe_gfx.h"
+#include "vcpe_3d.h"
 #endif
