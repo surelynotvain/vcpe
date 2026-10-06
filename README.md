@@ -1,117 +1,27 @@
 # VCPE: Vain's C Portable Engine
 
-A small game engine in plain C for the **Sony PlayStation Portable**, built for 2D demakes of PC games. It is the shared base of:
+A small game engine in plain C for the **Sony PlayStation Portable**, made for demakes of PC games.
 
-- [**Helltaker PSP**](https://github.com/surelynotvain/helltaker-psp): the full game plus Examtaker, on the VCPE base
-- [**Awaria PSP**](https://github.com/surelynotvain/awaria-psp): the full game, on VCPE 2 (the base plus a Unity-style runtime)
+## Versions
 
-The engine gives a game the PSP side of things (startup, files, graphics, sound, testing) so the game code can focus on its own rules. No splash screen, no external engine, no dependencies beyond the PSPSDK.
+| Version | What it is | Used by | Source |
+|---|---|---|---|
+| **VCPE 1.0** | The base: system, data PAK, GU renderer, ADPCM mixer, test harness, tools | [Helltaker PSP](https://github.com/surelynotvain/helltaker-psp) | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-1.0) |
+| **VCPE 2.0** | The base plus a Unity-style runtime (scenes, animator, 2D physics, pathfinding, particles, glyph text) | [Awaria PSP](https://github.com/surelynotvain/awaria-psp) | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-2.0) |
+| **VCPE 3** | In development, in this branch | | |
 
-## What is in here
+The source code of each finished version is in the **Source code** downloads of its release.
 
-| Folder | What it is |
-|---|---|
-| [`src/`](src/) | **VCPE base**: system, data PAK, renderer, mixer, test harness |
-| [`vcpe2/`](vcpe2/) | **VCPE 2 advanced layer**: a small Unity-style runtime (scenes, Mecanim animator, 2D physics, A* pathfinding, particles), a script layer and a sprite and glyph-text renderer |
-| [`tools/`](tools/) | Python and C helpers for a game's data converter and for the XMB files |
+## VCPE 3
 
-### VCPE base (`src/`)
+VCPE 3 starts with a cleanup of VCPE 2:
 
-| Module | What it does |
-|---|---|
-| `vcpe.h` | The one header a game includes |
-| `vcpe_sys` | HOME and sleep callbacks, 333 MHz, `vcpe_path()` for files next to the EBOOT, `vcpe_running` |
-| `vcpe_pak` | One big read-only data file read by offset; reopens and retries after sleep/resume and on slow memory sticks |
-| `vcpe_gfx` | GU setup and frames, texture bundles loaded and unloaded per scene, paletted (T4/T8) swizzled pages with their CLUTs, cached render state (page, blend, white, filter), textured quads, colour fills, strips, scissor clipping, per-frame stats |
-| `vcpe_audio` | Software mixer: up to 32 ADPCM sound effect voices (pitch, gain, loop, pause), streamed ADPCM music with fades, volume, ducking |
-| `vcpe_test` | `AUTOTEST.TXT` input scripts (`wait`, `press`, `hold`, `rec`, `quit` plus the game's own commands) with a fixed time step, and frame recording to `REC.RAW` for frame-exact regression tests |
+- the advanced layer moves into the engine and stops depending on one game's generated headers
+- one layout and naming scheme for every module
+- the base, the runtime and the tools documented together
 
-### VCPE 2 advanced layer (`vcpe2/`)
-
-| Files | What it does |
-|---|---|
-| `w_world`, `awfmt.h`, `w_hooks.h` | GameObjects, transforms, RectTransforms and components loaded from a converted scene blob; prefab instancing; SetActive |
-| `w_anim` | Mecanim: parameters, triggers, exit times, write defaults, curves bound to scene objects, animation events |
-| `w_phys` | Physics2D subset: Rigidbody2D, circle, box and capsule colliders, wall tiles, layer matrix, trigger and collision events, OverlapCircle, Raycast, CircleCast at a fixed 50 Hz |
-| `w_path` | A* grid pathfinding |
-| `w_render` | Draw list sorted like Unity (sorting layer, order in layer, custom Y axis): sprites, tilemaps, trails, lines, canvases |
-| `w_part` | ParticleSystem subset |
-| `g_core` | Script layer: behaviour tables per script type, game time and time scale, coroutines |
-| `prefs` | PlayerPrefs |
-| `aw_gfx` | Affine, tiled and sliced sprites, UI images and masks, SDF glyph text, language packs |
-
-VCPE 2 was written for Awaria first: some files still include that game's generated data header and script table. Making the layer fully game-independent is future work.
-
-### Tools (`tools/`)
-
-| File | What it does |
-|---|---|
-| `vcpe_tex.py` | Texture pages for a converter: power-of-two sizes, skyline packing, PSP swizzle, T4/T8 palette quantizing, 64-byte alignment |
-| `vcpe_snd.py`, `adpcm_enc.c` | Builds the ADPCM encoder and converts WAVs into the mixer's format |
-| `mksfo.py` | PARAM.SFO writer (keys sorted like Sony's files) |
-| `make_icon1.sh`, `mkicon1.py` | Animated XMB icon (ICON1.PMF) from PNG frames: x264 plus an own PSMF muxer |
-| `make_snd0.sh`, `mksnd0.py` | XMB background music (SND0.AT3) as ATRAC3 with a hardware-safe header |
-
-The Python tools need Python 3 with `numpy`, `Pillow` and `imagequant`. The XMB tools also need `ffmpeg`, `x264` and [atracdenc](https://github.com/dcherednik/atracdenc).
-
-## How a game uses it
-
-Each game has its own **converter** that turns the original game's files into one data PAK (texture bundles, sound effects, game data) plus a generated C table of pages and bundles. The game then:
-
-```c
-#include <pspkernel.h>
-#include "vcpe.h"
-#include "gamedata.h"   /* generated by the game's converter: g_pages, g_bundles, NUM_BUNDLES */
-
-PSP_MODULE_INFO("My Demake", PSP_MODULE_USER, 1, 0);
-PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
-PSP_HEAP_SIZE_KB(-1024);
-
-int main(int argc, char *argv[])
-{
-    char path[300];
-    vcpe_sys_init(argc, argv);
-    vcpe_path(path, sizeof path, "GAME.PAK");
-    if (vcpe_pak_open(path) < 0)
-        return 0;
-    vcpe_gfx_tables(g_pages, g_bundles, NUM_BUNDLES);
-    vcpe_gfx_init();
-    vcpe_bundle_load(0);                       /* textures every scene uses */
-    while (vcpe_running) {
-        vcpe_gfx_begin(0xFF000000);            /* clear colour, ABGR */
-        if (vcpe_bind_page(0))
-            vcpe_quad(0, 0, 256, 256, 0, 0, 256, 256, 0xFFFFFFFF);
-        vcpe_gfx_end();                        /* waits for vblank and swaps */
-    }
-    vcpe_gfx_shutdown();
-    vcpe_pak_close();
-    sceKernelExitGame();
-    return 0;
-}
-```
-
-Sound: `vcpe_audio_init()` takes the music PAK path and the sound effect table, then `vcpe_voice_start()` and `vcpe_music_play()` play them. Testing: `vcpe_test_load()` with the game's hooks makes `AUTOTEST.TXT` drive the input.
-
-## Building
-
-Use the [pspdev](https://github.com/pspdev/pspdev) toolchain. Add the engine's modules to the game's PSPSDK Makefile, for example:
-
-```make
-VCPE ?= path/to/vcpe
-VCPE_MODULES := vcpe_sys vcpe_pak vcpe_audio vcpe_test vcpe_gfx
-OBJS += $(addprefix vcpe_obj/,$(addsuffix .o,$(VCPE_MODULES)))
-INCDIR += $(VCPE)/src
-LIBS := -lpspgu -lpspaudio -lpspctrl -lpsppower -lm
-
-vcpe_obj/%.o: $(VCPE)/src/%.c
-	@mkdir -p vcpe_obj
-	$(CC) $(CFLAGS) -c -o $@ $<
-```
-
-## Status
-
-Both games are built on this code and are covered by a frame-exact regression test (the same input script must give byte-identical frames before and after every engine change). Runs on PSP-2000, 3000, Street and Go, and in PPSSPP. PSP-1000 support depends on how much memory a game needs.
+After that, the plan is 3D: a GU 3D module (depth buffer, hardware lights, fog, skinned meshes), low-resolution render-to-texture for PS1-style looks, and a converter for Godot 4 scenes.
 
 ## License
 
-[MIT](LICENSE), by surelynotvain. The engine contains no game assets; the games built on it use data converted from the player's own copies of the original games.
+[MIT](LICENSE), by surelynotvain.
