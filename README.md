@@ -30,10 +30,16 @@ A game compiles `src/` and, if it uses the runtime, `runtime/` together with its
 - Game rules are out of the runtime: a demo build's chapter limit is a game hook (`g_scene_filter`), and the runtime no longer includes the game's input header
 - Both games still build from this tree and give byte-identical frames in the regression test
 
+### 3D so far
+
+- `vcpe_3d`: a 16-bit depth buffer in VRAM (only once a game draws 3D, so 2D games are unchanged), a perspective camera given like a Godot Camera3D (position, YXZ euler angles in degrees, vertical FOV), indexed meshes in world space (`VcpeVtx`: float UV, ABGR colour, float position, 16-bit indices), nearest filtering for a PS1-style look, optional fog, and a clean switch back to 2D for HUDs
+- `vcpe_stat_frame_us`: how long the last frame took until the GPU finished (without the vblank wait), and `vcpe_stat_tris`
+- Converter side (in progress): Godot 4 text scenes, mesh surfaces (octahedral normals, LOD index sets), world transforms, static lighting baked into vertex colours
+
 ### Next
 
+- 3D: per-view culling and mesh simplification, low-resolution render-to-texture with dithering, skinned meshes, a Godot-style node and animation runtime
 - Rename the runtime files to one naming scheme and replace the remaining game data names with a documented data format
-- Then 3D: a GU 3D module (depth buffer, hardware lights, fog, skinned meshes), low-resolution render-to-texture for PS1-style looks, and a converter for Godot 4 scenes
 
 After that, the plan is 3D: a GU 3D module (depth buffer, hardware lights, fog, skinned meshes), low-resolution render-to-texture for PS1-style looks, and a converter for Godot 4 scenes.
 

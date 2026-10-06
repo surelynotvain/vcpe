@@ -60,8 +60,12 @@ void vcpe_gfx_tables(const VcpePage *p, const VcpeBundle *b, int nb)
     nbundles = nb > MAX_BUNDLES ? MAX_BUNDLES : nb;
 }
 
+static SceInt64 frame_t0;
+int vcpe_stat_frame_us;   /* last frame: vcpe_gfx_begin until the GPU finished (vblank wait not included) */
+
 void vcpe_gfx_begin(uint32_t clear)
 {
+    frame_t0 = sceKernelGetSystemTimeWide();
     sceGuStart(GU_DIRECT, dlist);
     sceGuClearColor(clear);
     sceGuClear(GU_COLOR_BUFFER_BIT);
@@ -75,6 +79,7 @@ void vcpe_gfx_end(void)
 {
     sceGuFinish();
     sceGuSync(0, 0);
+    vcpe_stat_frame_us = (int)(sceKernelGetSystemTimeWide() - frame_t0);
     sceDisplayWaitVblankStart();
     sceGuSwapBuffers();
 }

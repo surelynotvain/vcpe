@@ -42,5 +42,6 @@ void vcpe_clip_reset(void);
 
 extern int vcpe_stat_binds, vcpe_stat_quads;   /* per-frame counters for the test builds' perf lines */
 extern float vcpe_stat_area;
+extern int vcpe_stat_frame_us;   /* last frame: begin until the GPU finished, without the vblank wait */
 
 #endif
