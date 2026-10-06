@@ -1,7 +1,7 @@
 /* IMA ADPCM block encoder: s16le interleaved PCM on stdin -> blocks on stdout.
  * Block = for each channel {int16 predictor, uint8 step index, uint8 0},
  *         then for each channel ADPCM_BLOCK/2 bytes (low nibble first).
- * Decoder lives in src/audio.c (same constants). */
+ * Decoder: src/vcpe_audio.c (same constants). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
