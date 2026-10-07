@@ -37,13 +37,16 @@ A game compiles `src/` and, if it uses the runtime, `runtime/` together with its
 - `vcpe_node3d`: a Godot-like node tree (position, YXZ euler rotation, scale, visibility, render layers, meshes that can be swapped) and AnimationPlayers that play converted Godot animations: value tracks (position, rotation, scale, visibility, transparency, FOV) with nearest/linear/cubic interpolation and per-key easing, method tracks and audio tracks through callbacks
 - `vcpe_co`: coroutines for game logic written like a script with waits ("await a timer", "await another routine"): each runs on its own PSP thread but they are handed the CPU one at a time, in a fixed order, so the code needs no locks and always runs the same way
 - `vcpe_font` + `tools/vcpe_font.py`: bitmap fonts baked from TTF/OTF, UTF-8 text, centred lines and a character limit for typewriter text
+- `vcpe_3d_visible()`: tests a bounding sphere against the camera's view, so games skip what is off-screen; `vcpe_node3d` uses it with per-mesh bounds, and only rebuilds a node's matrices when it or a parent moved
+- `vcpe_post`: post effects without pixel shaders. The 3D picture is drawn off-screen, read back through the GE's palette once per colour channel, and added back together, so any per-channel curve works (posterize, brightness, contrast, gamma), plus film grain before the curves so posterized bands dither into grain
+- `vcpe_audio`: an optional 6 dB/octave low-pass on the music (music heard through a wall)
 - `vcpe_stat_frame_us`: how long the last frame took until the GPU finished (without the vblank wait), and `vcpe_stat_tris`
 - Converter side (in progress): Godot 4 text scenes, mesh surfaces (octahedral normals, LOD index sets), world transforms, static lighting baked into vertex colours
-- [`tools/godot/`](tools/godot/): Godot 4 scene reader, world transforms, animated-node finder, and `vcpe_vis`, which drops static triangles no camera pose ever sees (more than half of a typical scene)
+- [`tools/godot/`](tools/godot/): Godot 4 scene reader, world transforms, animated-node finder, `vcpe_vis`, which drops static triangles no camera pose ever sees (more than half of a typical scene), and `vcpe_shadow`, which bakes shadows into the vertex lighting
 
 ### Next
 
-- 3D: runtime per-view culling, low-resolution render-to-texture with dithering, skinned meshes, 16-bit vertex formats
+- 3D: skinned meshes, 16-bit vertex formats, loading and freeing areas of a scene while the screen is black
 - Rename the runtime files to one naming scheme and replace the remaining game data names with a documented data format
 
 After that, the plan is 3D: a GU 3D module (depth buffer, hardware lights, fog, skinned meshes), low-resolution render-to-texture for PS1-style looks, and a converter for Godot 4 scenes.

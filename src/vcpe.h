@@ -11,4 +11,5 @@
 #include "vcpe_node3d.h"
 #include "vcpe_co.h"
 #include "vcpe_font.h"
+#include "vcpe_post.h"
 #endif

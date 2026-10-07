@@ -1,6 +1,7 @@
 /* VCPE 3D: depth buffer, camera matrices and indexed meshes on the GU (see vcpe_3d.h). */
 #include <pspkernel.h>
 #include <pspgu.h>
+#include <math.h>
 #include <pspgum.h>
 #include "vcpe_gfx.h"
 #include "vcpe_3d.h"
@@ -20,8 +21,40 @@ void vcpe_3d_fog(float start, float end, uint32_t color)
     fog_color = color;
 }
 
+/* view frustum of the current camera, for vcpe_3d_visible */
+static float fr_pos[3], fr_right[3], fr_up[3], fr_fwd[3], fr_th, fr_tv, fr_sh, fr_sv, fr_near, fr_far;
+
+int vcpe_3d_visible(const float c[3], float r)
+{
+    float d[3] = {c[0] - fr_pos[0], c[1] - fr_pos[1], c[2] - fr_pos[2]};
+    float z = d[0] * fr_fwd[0] + d[1] * fr_fwd[1] + d[2] * fr_fwd[2];
+    if (z + r < fr_near || z - r > fr_far)
+        return 0;
+    float x = d[0] * fr_right[0] + d[1] * fr_right[1] + d[2] * fr_right[2];
+    float y = d[0] * fr_up[0] + d[1] * fr_up[1] + d[2] * fr_up[2];
+    if (fabsf(x) - r * fr_sh > z * fr_th) return 0;
+    if (fabsf(y) - r * fr_sv > z * fr_tv) return 0;
+    return 1;
+}
+
 void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, float znear, float zfar)
 {
+    {
+        const float k = GU_PI / 180.0f;
+        float cx = cosf(rot_deg[0] * k), sx = sinf(rot_deg[0] * k), cy = cosf(rot_deg[1] * k), sy = sinf(rot_deg[1] * k);
+        float cz = cosf(rot_deg[2] * k), sz = sinf(rot_deg[2] * k);
+        /* columns of Ry * Rx * Rz: right, up, back */
+        fr_right[0] = cy * cz + sy * sx * sz; fr_right[1] = cx * sz; fr_right[2] = -sy * cz + cy * sx * sz;
+        fr_up[0] = -cy * sz + sy * sx * cz; fr_up[1] = cx * cz; fr_up[2] = sy * sz + cy * sx * cz;
+        fr_fwd[0] = -sy * cx; fr_fwd[1] = sx; fr_fwd[2] = -cy * cx;
+        for (int i = 0; i < 3; i++) fr_pos[i] = pos[i];
+        fr_tv = tanf(fov_deg * 0.5f * k);
+        fr_th = fr_tv * (float)VCPE_SCR_W / VCPE_SCR_H;
+        fr_sv = sqrtf(1 + fr_tv * fr_tv);
+        fr_sh = sqrtf(1 + fr_th * fr_th);
+        fr_near = znear;
+        fr_far = zfar;
+    }
     sceGuDepthBuffer(ZB_ADDR, BUF_W);
     sceGuDepthRange(65535, 0);
     sceGuDepthFunc(GU_GEQUAL);

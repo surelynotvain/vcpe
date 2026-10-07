@@ -30,6 +30,8 @@ void vcpe_bundles_keep(const uint8_t *list, int n);   /* unload the others first
 /* cached state */
 int vcpe_bind_page(int page);   /* 0: its bundle is not loaded */
 void vcpe_page_size(int page, int *w, int *h);
+uint32_t vcpe_gfx_draw_offset(void);     /* VRAM offset of this frame's draw buffer (512-wide, 8888) */
+void vcpe_gfx_state_reset(void);         /* forget the cached GE state (after drawing with raw sceGu calls) */
 void vcpe_unbind(void);         /* the game bound a texture itself (fonts, LANG pages) */
 void vcpe_blend(int additive);
 void vcpe_tex_white(int on);    /* colour = vertex colour, alpha = texture alpha (font materials) */

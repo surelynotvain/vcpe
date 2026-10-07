@@ -67,7 +67,7 @@ static int nsfx, nvoices;
 static Voice voices[VCPE_MAX_VOICES];
 static volatile int sfx_vol = 256, mus_vol = 256, mus_paused = 0;
 static volatile int mus_num = 1, mus_den = 1;
-static volatile int lp_k = 32768;   /* music low-pass: 2 one-pole stages, coefficient x 32768 (32768: off) */
+static volatile int lp_k = 32768;   /* music low-pass: one pole (6 dB/octave), coefficient x 32768 (32768: off) */
 static int lp_l[2], lp_r[2];
 static volatile uint32_t mixed_ms;
 
@@ -302,8 +302,8 @@ static int mix_thread(SceSize args, void *argp)
             music_frame(&l, &r);
             if (lp_k < 32768) {
                 int k = lp_k;
-                lp_l[0] += ((l - lp_l[0]) * k) >> 15; lp_l[1] += ((lp_l[0] - lp_l[1]) * k) >> 15; l = lp_l[1];
-                lp_r[0] += ((r - lp_r[0]) * k) >> 15; lp_r[1] += ((lp_r[0] - lp_r[1]) * k) >> 15; r = lp_r[1];
+                lp_l[0] += ((l - lp_l[0]) * k) >> 15; l = lp_l[0];
+                lp_r[0] += ((r - lp_r[0]) * k) >> 15; r = lp_r[0];
             }
             l = (l * mg) >> 8;
             r = (r * mg) >> 8;

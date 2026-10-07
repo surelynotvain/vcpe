@@ -9,7 +9,7 @@
 typedef struct { int16_t parent; int16_t mesh; int16_t base; uint8_t visible, transparency; uint32_t layers, name;
                  float pos[3], rot[3], scale[3]; } VcpeNodeDef;   /* base: index of a fixed parent matrix (roots), or -1; transparency: GeometryInstance3D.transparency x 255 */
 typedef struct { uint16_t page; uint32_t voff, nverts, ioff, nidx; } VcpeBatch;
-typedef struct { uint16_t first, n; } VcpeMeshDef;               /* batches g_mbatches[first .. first+n) */
+typedef struct { uint16_t first, n; float bound[4]; } VcpeMeshDef;   /* batches g_mbatches[first .. first+n); bounding sphere (local centre, radius) */
 enum { VCPE_TR_POS, VCPE_TR_ROT, VCPE_TR_SCALE, VCPE_TR_VISIBLE, VCPE_TR_FOV, VCPE_TR_METHOD, VCPE_TR_AUDIO, VCPE_TR_TRANSPARENCY };
 enum { VCPE_INTERP_NEAREST, VCPE_INTERP_LINEAR, VCPE_INTERP_CUBIC };
 typedef struct { uint8_t kind, interp, discrete, pad; int16_t node; uint16_t nkeys; uint32_t first; } VcpeTrackDef;

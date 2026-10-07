@@ -212,6 +212,17 @@ void vcpe_node3d_draw(uint32_t cull)
         /* fully transparent (GeometryInstance3D.transparency 1): not drawn; partial transparency comes later */
         if (m < 0 || !(nodes[i].layers & cull) || nodes[i].transparency >= 250 || !shown(i))
             continue;
+        const VcpeMeshDef *mdf = &S->meshes[m];
+        if (mdf->bound[3] > 0) {   /* off-screen: skip (sphere moved by the world matrix) */
+            const float *w = nodes[i].world, *b = mdf->bound;
+            float c[3];
+            for (int k = 0; k < 3; k++) c[k] = w[k * 4] * b[0] + w[k * 4 + 1] * b[1] + w[k * 4 + 2] * b[2] + w[k * 4 + 3];
+            float s0 = w[0] * w[0] + w[4] * w[4] + w[8] * w[8], s1 = w[1] * w[1] + w[5] * w[5] + w[9] * w[9];
+            float s2 = w[2] * w[2] + w[6] * w[6] + w[10] * w[10], sm = s0 > s1 ? s0 : s1;
+            if (s2 > sm) sm = s2;
+            if (!vcpe_3d_visible(c, b[3] * sqrtf(sm)))
+                continue;
+        }
         vcpe_3d_model(nodes[i].world);
         if (nodes[i].transparency)
             vcpe_3d_alpha(1.0f - nodes[i].transparency / 255.0f);
