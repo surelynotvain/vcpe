@@ -5,6 +5,7 @@
 #include <pspaudio.h>
 #include <pspiofilemgr.h>
 #include <string.h>
+#include <math.h>
 #include <stdio.h>
 #include <malloc.h>
 #include "vcpe_sys.h"
@@ -66,6 +67,8 @@ static int nsfx, nvoices;
 static Voice voices[VCPE_MAX_VOICES];
 static volatile int sfx_vol = 256, mus_vol = 256, mus_paused = 0;
 static volatile int mus_num = 1, mus_den = 1;
+static volatile int lp_k = 32768;   /* music low-pass: 2 one-pole stages, coefficient x 32768 (32768: off) */
+static int lp_l[2], lp_r[2];
 static volatile uint32_t mixed_ms;
 
 static int sfx_sample(Voice *v, uint32_t i)
@@ -256,6 +259,13 @@ void vcpe_music_stop_now(void)
 void vcpe_sfx_gain(int gain256) { sfx_vol = gain256; }
 void vcpe_music_gain(int gain256) { mus_vol = gain256; }
 void vcpe_music_scale(int num, int den) { mus_den = den > 0 ? den : 1; mus_num = num; }
+void vcpe_music_lowpass(float hz)
+{
+    if (hz <= 0 || hz >= 20000) { lp_k = 32768; return; }
+    float a = 1.0f - expf(-6.2831853f * hz / 44100.0f);
+    int k = (int)(a * 32767);
+    lp_k = k < 1 ? 1 : k;
+}
 void vcpe_music_pause(int on) { mus_paused = on; }
 uint32_t vcpe_audio_ms(void) { return mixed_ms; }
 
@@ -290,6 +300,11 @@ static int mix_thread(SceSize args, void *argp)
         for (int i = 0; i < OUT_FRAMES; i++) {
             int l, r;
             music_frame(&l, &r);
+            if (lp_k < 32768) {
+                int k = lp_k;
+                lp_l[0] += ((l - lp_l[0]) * k) >> 15; lp_l[1] += ((lp_l[0] - lp_l[1]) * k) >> 15; l = lp_l[1];
+                lp_r[0] += ((r - lp_r[0]) * k) >> 15; lp_r[1] += ((lp_r[0] - lp_r[1]) * k) >> 15; r = lp_r[1];
+            }
             l = (l * mg) >> 8;
             r = (r * mg) >> 8;
             int s = 0;

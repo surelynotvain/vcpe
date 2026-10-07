@@ -10,10 +10,12 @@
 
 typedef struct {
     float pos[3], rot[3], scale[3];
-    int16_t mesh;
+    int16_t mesh, parent;
     uint8_t visible, transparency;
     uint32_t layers;
-    float world[16];
+    uint8_t dirty, moved;   /* dirty: recompute the local matrix; moved: world matrix changed in this update */
+    float key[9];           /* pos, rot, scale the cached local matrix was built from */
+    float local[16], world[16];
 } Node;
 
 typedef struct {
@@ -53,7 +55,9 @@ void vcpe_node3d_load(const VcpeScene3D *s)
         nodes[i].visible = d->visible;
         nodes[i].layers = d->layers;
         nodes[i].mesh = d->mesh;
+        nodes[i].parent = d->parent;
         nodes[i].transparency = d->transparency;
+        nodes[i].dirty = 1;
     }
     for (int p = 0; p < s->nplayers; p++) {
         players[p].clip = -1;
@@ -77,6 +81,7 @@ void vcpe_node3d_set_visible(int n, int on) { if (n >= 0) nodes[n].visible = on 
 int vcpe_node3d_visible(int n) { return n >= 0 && nodes[n].visible; }
 void vcpe_node3d_set_layers(int n, uint32_t l) { if (n >= 0) nodes[n].layers = l; }
 void vcpe_node3d_set_mesh(int n, int m) { if (n >= 0) nodes[n].mesh = m; }
+void vcpe_node3d_set_transparency(int n, float t) { if (n >= 0) nodes[n].transparency = (uint8_t)(t < 0 ? 0 : t > 1 ? 255 : t * 255); }
 float *vcpe_node3d_pos(int n) { return nodes[n].pos; }
 float *vcpe_node3d_rot(int n) { return nodes[n].rot; }
 float *vcpe_node3d_scale(int n) { return nodes[n].scale; }
@@ -113,29 +118,90 @@ static void local_matrix(const Node *n, float *m)
 
 static void update_world(void)
 {
-    /* the converter writes parents before their children */
+    /* the converter writes parents before their children. Local matrices are cached and only rebuilt when
+     * pos/rot/scale changed (they are writable through vcpe_node3d_pos/rot/scale, so compare a snapshot);
+     * world matrices only when the local matrix or the parent's world moved. */
     for (int i = 0; i < S->nnodes; i++) {
-        float l[16];
-        local_matrix(&nodes[i], l);
-        int p = S->nodes[i].parent;
+        Node *n = &nodes[i];
+        int p = n->parent;
+        n->moved = 0;
+        if (n->dirty || memcmp(n->key, n->pos, sizeof n->key)) {
+            memcpy(n->key, n->pos, sizeof n->key);
+            local_matrix(n, n->local);
+            n->dirty = 0;
+            n->moved = 1;
+        } else if (!(p >= 0 && nodes[p].moved)) {
+            continue;
+        }
+        n->moved = 1;
         if (p >= 0)
-            mat_mul(nodes[p].world, l, nodes[i].world);
+            mat_mul(nodes[p].world, n->local, n->world);
         else if (S->nodes[i].base >= 0)
-            mat_mul(S->bases[S->nodes[i].base], l, nodes[i].world);
+            mat_mul(S->bases[S->nodes[i].base], n->local, n->world);
         else
-            memcpy(nodes[i].world, l, sizeof l);
+            memcpy(n->world, n->local, sizeof n->local);
     }
+}
+
+/* inverse of an affine row-major 4x4 */
+static void mat_inv_affine(const float *m, float *o)
+{
+    float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], k = m[10];
+    float det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+    float id = det != 0 ? 1.0f / det : 0;
+    o[0] = (e * k - f * h) * id; o[1] = (c * h - b * k) * id; o[2] = (b * f - c * e) * id;
+    o[4] = (f * g - d * k) * id; o[5] = (a * k - c * g) * id; o[6] = (c * d - a * f) * id;
+    o[8] = (d * h - e * g) * id; o[9] = (b * g - a * h) * id; o[10] = (a * e - b * d) * id;
+    for (int r = 0; r < 3; r++)
+        o[r * 4 + 3] = -(o[r * 4] * m[3] + o[r * 4 + 1] * m[7] + o[r * 4 + 2] * m[11]);
+    o[12] = o[13] = o[14] = 0;
+    o[15] = 1;
+}
+
+void vcpe_node3d_set_parent(int n, int parent)
+{
+    if (n < 0) return;
+    update_world();
+    float pinv[16], l[16];
+    if (parent >= 0) {
+        mat_inv_affine(nodes[parent].world, pinv);
+        mat_mul(pinv, nodes[n].world, l);
+    } else {
+        memcpy(l, nodes[n].world, sizeof l);
+    }
+    Node *d = &nodes[n];
+    for (int k = 0; k < 3; k++) d->pos[k] = l[k * 4 + 3];
+    float sx = sqrtf(l[0] * l[0] + l[4] * l[4] + l[8] * l[8]);
+    float sy = sqrtf(l[1] * l[1] + l[5] * l[5] + l[9] * l[9]);
+    float sz = sqrtf(l[2] * l[2] + l[6] * l[6] + l[10] * l[10]);
+    float det = l[0] * (l[5] * l[10] - l[6] * l[9]) - l[1] * (l[4] * l[10] - l[6] * l[8]) + l[2] * (l[4] * l[9] - l[5] * l[8]);
+    if (det < 0) sx = -sx;
+    d->scale[0] = sx; d->scale[1] = sy; d->scale[2] = sz;
+    float r12 = l[6] / sz, r02 = l[2] / sz, r22 = l[10] / sz, r10 = l[4] / sx, r11 = l[5] / sy;
+    if (r12 > 1) r12 = 1;
+    if (r12 < -1) r12 = -1;
+    d->rot[0] = asinf(-r12);                       /* YXZ euler, as Godot's get_euler() */
+    if (fabsf(r12) < 0.99999f) {
+        d->rot[1] = atan2f(r02, r22);
+        d->rot[2] = atan2f(r10, r11);
+    } else {
+        d->rot[1] = atan2f(-l[8] / sx, l[0] / sx);
+        d->rot[2] = 0;
+    }
+    d->parent = parent;
+    d->dirty = 1;
 }
 
 static int shown(int i)
 {
-    for (; i >= 0; i = S->nodes[i].parent)
+    for (; i >= 0; i = nodes[i].parent)
         if (!nodes[i].visible)
             return 0;
     return 1;
 }
 
 int vcpe_node3d_shown(int n) { return n >= 0 && shown(n); }
+int vcpe_node3d_parent(int n) { return n >= 0 ? nodes[n].parent : -1; }
 uint32_t vcpe_node3d_layers(int n) { return n >= 0 ? nodes[n].layers : 0; }
 float vcpe_node3d_opacity(int n) { return n >= 0 ? 1.0f - nodes[n].transparency / 255.0f : 0; }
 
@@ -262,6 +328,7 @@ void vcpe_anim_play(int p, uint32_t clip)
 void vcpe_anim_stop(int p) { if (p >= 0) players[p].playing = 0; }
 int vcpe_anim_playing(int p) { return p >= 0 && players[p].playing; }
 float vcpe_anim_time(int p) { return p >= 0 ? players[p].t : 0; }
+float vcpe_anim_length(int p) { return p >= 0 && players[p].clip >= 0 ? S->clips[players[p].clip].length : 0; }
 
 void vcpe_node3d_update(float dt)
 {
