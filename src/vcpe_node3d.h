@@ -53,6 +53,7 @@ void vcpe_anim_play(int player, uint32_t clip_name_hash);   /* from the start, l
 void vcpe_anim_stop(int player);
 int vcpe_anim_playing(int player);
 float vcpe_anim_time(int player);
+uint32_t vcpe_anim_clip(int player);                 /* name hash of the current (or last) clip, 0: none */
 float vcpe_anim_length(int player);                 /* length of the current (or last) clip, s */
 extern float vcpe_anim_fov;                          /* last value of a camera FOV track (0: none) */
 
