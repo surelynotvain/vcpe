@@ -5,6 +5,7 @@
 #include <psppower.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "vcpe_sys.h"
 
 volatile int vcpe_running = 1;
@@ -97,4 +98,15 @@ void vcpe_fatal(const char *title, const char *text)
     while (vcpe_running)
         sceDisplayWaitVblankStart();
     sceKernelExitGame();
+}
+
+int vcpe_heap_kb(void)
+{
+    unsigned lo = 0, hi = 64u << 20;   /* binary search on malloc, 64 KB steps */
+    while (hi - lo > 65536) {
+        unsigned mid = (lo + hi) / 2;
+        void *p = malloc(mid);
+        if (p) { free(p); lo = mid; } else hi = mid;
+    }
+    return (int)(lo / 1024);
 }
