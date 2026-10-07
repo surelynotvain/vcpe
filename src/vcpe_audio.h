@@ -32,6 +32,7 @@ void vcpe_music_pause(int on);
 void vcpe_sfx_gain(int gain256);
 void vcpe_music_gain(int gain256);
 void vcpe_music_scale(int num, int den);   /* extra music factor: ducking, muffling (1/1 = none) */
+void vcpe_music_lowpass(float hz);         /* music through a 12 dB/octave low-pass at hz (0: off), e.g. heard through a wall */
 uint32_t vcpe_audio_ms(void);              /* audio time mixed so far, in ms */
 
 #endif

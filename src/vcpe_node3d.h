@@ -32,10 +32,15 @@ int vcpe_node3d_find(uint32_t name_hash);            /* node index by its path h
 void vcpe_node3d_set_visible(int node, int on);
 int vcpe_node3d_visible(int node);                   /* own flag */
 int vcpe_node3d_shown(int node);                     /* it and all its parents visible */
+int vcpe_node3d_parent(int node);                    /* current parent, or -1 */
 uint32_t vcpe_node3d_layers(int node);
 float vcpe_node3d_opacity(int node);                  /* 1 - transparency */
 void vcpe_node3d_set_layers(int node, uint32_t layers);
 void vcpe_node3d_set_mesh(int node, int mesh);       /* swap the mesh (e.g. a material variant); -1: none */
+void vcpe_node3d_set_transparency(int node, float t);   /* GeometryInstance3D.transparency 0..1 */
+/* move a node under another parent keeping its world transform (Godot reparent / remove_child + add_child with
+ * global_transform restored). The new parent must come before the node in the table (parents are updated first). */
+void vcpe_node3d_set_parent(int node, int parent);
 float *vcpe_node3d_pos(int node);                    /* writable local position / rotation (radians) / scale */
 float *vcpe_node3d_rot(int node);
 float *vcpe_node3d_scale(int node);
@@ -48,6 +53,7 @@ void vcpe_anim_play(int player, uint32_t clip_name_hash);   /* from the start, l
 void vcpe_anim_stop(int player);
 int vcpe_anim_playing(int player);
 float vcpe_anim_time(int player);
+float vcpe_anim_length(int player);                 /* length of the current (or last) clip, s */
 extern float vcpe_anim_fov;                          /* last value of a camera FOV track (0: none) */
 
 uint32_t vcpe_hash(const char *s);                   /* FNV-1a, the hash the converter uses for names */
