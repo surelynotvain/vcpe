@@ -124,6 +124,8 @@ void vcpe_bundles_keep(const uint8_t *list, int n)
 }
 
 /* ------------------------------------------------------------------ state */
+void vcpe_page_size(int p, int *w, int *h) { *w = pages[p].w; *h = pages[p].h; }
+
 int vcpe_bind_page(int p)
 {
     if (p == bound_page)

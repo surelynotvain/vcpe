@@ -23,7 +23,7 @@ typedef struct {
     const VcpeMeshDef *meshes; const VcpeBatch *batches; const uint8_t *geo; uint32_t geo_off;   /* geo: PAK bytes from geo_off */
     const VcpePlayerDef *players; int nplayers;
     const VcpeClipDef *clips; const VcpeTrackDef *tracks; const VcpeKeyDef *keys;
-    void (*on_method)(int player, int method);   /* method track key reached */
+    void (*on_method)(int player, int node, int method);   /* method track key reached (node: the track's target, or -1) */
     void (*on_audio)(int player, int sound, float from);   /* audio track key reached (from: start offset, s) */
 } VcpeScene3D;
 
@@ -31,6 +31,9 @@ void vcpe_node3d_load(const VcpeScene3D *s);
 int vcpe_node3d_find(uint32_t name_hash);            /* node index by its path hash, or -1 */
 void vcpe_node3d_set_visible(int node, int on);
 int vcpe_node3d_visible(int node);                   /* own flag */
+int vcpe_node3d_shown(int node);                     /* it and all its parents visible */
+uint32_t vcpe_node3d_layers(int node);
+float vcpe_node3d_opacity(int node);                  /* 1 - transparency */
 void vcpe_node3d_set_layers(int node, uint32_t layers);
 void vcpe_node3d_set_mesh(int node, int mesh);       /* swap the mesh (e.g. a material variant); -1: none */
 float *vcpe_node3d_pos(int node);                    /* writable local position / rotation (radians) / scale */

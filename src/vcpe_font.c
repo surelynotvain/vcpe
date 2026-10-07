@@ -1,6 +1,9 @@
 /* VCPE text drawing (see vcpe_font.h). */
 #include <string.h>
+#include <pspgu.h>
+#include <pspgum.h>
 #include "vcpe_gfx.h"
+#include "vcpe_3d.h"
 #include "vcpe_font.h"
 
 static uint32_t next_cp(const char **ps)
@@ -97,4 +100,54 @@ void vcpe_font_draw_centered(const VcpeFont *f, float cx, float cy, const char *
         y += f->height * scale;
     }
     vcpe_tex_white(0);
+}
+
+void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float size, uint32_t color, int align)
+{
+    int nchars = vcpe_utf8_len(s);
+    if (!nchars || !vcpe_bind_page(f->page))
+        return;
+    int lines = 1;
+    for (const char *p = s; *p; p++) lines += *p == '\n';
+    int pw, ph;
+    vcpe_page_size(f->page, &pw, &ph);
+    float su = 1.0f / pw, sv = 1.0f / ph;   /* 3D drawing takes normalised texture coordinates */
+    VcpeVtx *v = sceGuGetMemory(sizeof(VcpeVtx) * 6 * nchars);
+    int n = 0;
+    float y = lines * f->height * 0.5f;           /* top of the first line, in baked pixels (y up) */
+    const char *p = s;
+    while (*p) {
+        int probe = -1;
+        float w = line_width(f, p, &probe, 1.0f);
+        float x = align == 1 ? -w * 0.5f : align == 2 ? -w : 0;
+        while (*p && *p != '\n') {
+            const VcpeGlyph *g = glyph(f, next_cp(&p));
+            if (!g) continue;
+            if (g->w && g->h) {
+                float x0 = (x + g->xoff) * size, x1 = (x + g->xoff + g->w) * size;
+                float y0 = (y - g->yoff) * size, y1 = (y - g->yoff - g->h) * size;
+                float u0 = g->u * su, u1 = (g->u + g->w) * su, v0 = g->v * sv, v1 = (g->v + g->h) * sv;
+                VcpeVtx q[6] = {{u0, v0, color, x0, y0, 0}, {u1, v0, color, x1, y0, 0}, {u1, v1, color, x1, y1, 0},
+                                {u0, v0, color, x0, y0, 0}, {u1, v1, color, x1, y1, 0}, {u0, v1, color, x0, y1, 0}};
+                memcpy(v + n, q, sizeof q);
+                n += 6;
+            }
+            x += g->adv;
+        }
+        if (*p == '\n') p++;
+        y -= f->height;
+    }
+    if (!n) return;
+    vcpe_3d_model(m);
+    sceGuEnable(GU_BLEND);
+    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    sceGuDepthMask(GU_TRUE);
+    vcpe_tex_white(1);
+    vcpe_filter(0);
+    sceGumDrawArray(GU_TRIANGLES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, n, 0, v);
+    vcpe_tex_white(0);
+    vcpe_filter(1);
+    sceGuDepthMask(GU_FALSE);
+    sceGuDisable(GU_BLEND);
+    vcpe_3d_model(0);
 }

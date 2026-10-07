@@ -135,6 +135,10 @@ static int shown(int i)
     return 1;
 }
 
+int vcpe_node3d_shown(int n) { return n >= 0 && shown(n); }
+uint32_t vcpe_node3d_layers(int n) { return n >= 0 ? nodes[n].layers : 0; }
+float vcpe_node3d_opacity(int n) { return n >= 0 ? 1.0f - nodes[n].transparency / 255.0f : 0; }
+
 void vcpe_node3d_draw(uint32_t cull)
 {
     for (int i = 0; i < S->nnodes; i++) {
@@ -205,7 +209,7 @@ static void apply(int p, const VcpeClipDef *cl, float t0, float t1, int first)
             for (int i = 0; i < tr->nkeys; i++) {
                 if ((k[i].t > t0 || (first && k[i].t >= t0)) && k[i].t <= t1) {
                     if (tr->kind == VCPE_TR_METHOD && S->on_method)
-                        S->on_method(p, (int)k[i].v[0]);
+                        S->on_method(p, tr->node, (int)k[i].v[0]);
                     if (tr->kind == VCPE_TR_AUDIO && S->on_audio)
                         S->on_audio(p, (int)k[i].v[0], k[i].v[1]);
                 }

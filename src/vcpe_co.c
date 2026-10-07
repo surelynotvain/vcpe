@@ -135,3 +135,16 @@ void vcpe_co_update(float dt)
         }
     }
 }
+
+void vcpe_co_reset(void)
+{
+    for (int i = 0; i < MAX_CO; i++) {
+        if (!co[i].used)
+            continue;
+        if (!co[i].done)
+            sceKernelTerminateDeleteThread(co[i].thread);
+        sceKernelDeleteSema(co[i].wake);
+        co[i].used = 0;
+    }
+    current = -1;
+}

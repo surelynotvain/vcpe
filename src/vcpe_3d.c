@@ -33,6 +33,8 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
     sceGuDisable(GU_CULL_FACE);
     sceGuDisable(GU_BLEND);
     sceGuTexWrap(GU_REPEAT, GU_REPEAT);
+    sceGuEnable(GU_ALPHA_TEST);                 /* cut-out textures */
+    sceGuAlphaFunc(GU_GREATER, 0x20, 0xFF);
     vcpe_filter(1);
     vcpe_blend(0);
     vcpe_tex_white(0);
@@ -104,6 +106,7 @@ void vcpe_3d_alpha(float a)
 
 void vcpe_3d_end(void)
 {
+    sceGuDisable(GU_ALPHA_TEST);
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_FOG);
     sceGuEnable(GU_BLEND);

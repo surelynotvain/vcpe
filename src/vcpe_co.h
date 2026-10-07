@@ -14,5 +14,6 @@ void vcpe_co_join(int id);                   /* inside a coroutine: continue whe
 int vcpe_co_alive(int id);
 void vcpe_co_update(float dt);               /* main loop: advance game time by dt, run every coroutine that is due */
 int vcpe_co_running(void);                   /* number of live coroutines */
+void vcpe_co_reset(void);                    /* main loop only: end every coroutine at once (scene reload) */
 
 #endif
