@@ -12,6 +12,8 @@ void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx);  
 void vcpe_3d_fog(float start, float end, uint32_t color);
 void vcpe_3d_alpha(float a);   /* next draws: whole-object opacity (fixed blend factors); 1 = opaque */                         /* end <= start: off */
 void vcpe_3d_end(void);
+/* the camera of the last vcpe_3d_begin: can it see a world-space sphere? (skip drawing what it cannot) */
+int vcpe_3d_visible(const float center[3], float radius);
 
 extern int vcpe_stat_tris;   /* triangles submitted this frame */
 

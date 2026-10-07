@@ -17,6 +17,10 @@ static const VcpeBundle *bundles;
 static int nbundles;
 static uint8_t *bundle_mem[MAX_BUNDLES];
 static int bound_page = -2, bound_mode = -1, bound_white = -1, bound_filter = -1;
+static uint32_t draw_offset;   /* VRAM offset of the buffer being drawn this frame */
+
+uint32_t vcpe_gfx_draw_offset(void) { return draw_offset; }
+void vcpe_gfx_state_reset(void) { bound_page = -2; bound_mode = -1; bound_white = -1; bound_filter = -1; }
 int vcpe_stat_binds, vcpe_stat_quads;
 float vcpe_stat_area;
 
@@ -81,7 +85,7 @@ void vcpe_gfx_end(void)
     sceGuSync(0, 0);
     vcpe_stat_frame_us = (int)(sceKernelGetSystemTimeWide() - frame_t0);
     sceDisplayWaitVblankStart();
-    sceGuSwapBuffers();
+    draw_offset = (uint32_t)(uintptr_t)sceGuSwapBuffers();   /* the next frame draws into the other one */
 }
 
 /* ------------------------------------------------------------------ bundles */
