@@ -339,6 +339,7 @@ void vcpe_anim_play(int p, uint32_t clip)
 void vcpe_anim_stop(int p) { if (p >= 0) players[p].playing = 0; }
 int vcpe_anim_playing(int p) { return p >= 0 && players[p].playing; }
 float vcpe_anim_time(int p) { return p >= 0 ? players[p].t : 0; }
+uint32_t vcpe_anim_clip(int p) { return p >= 0 && players[p].clip >= 0 ? S->clips[players[p].clip].name : 0; }
 float vcpe_anim_length(int p) { return p >= 0 && players[p].clip >= 0 ? S->clips[players[p].clip].length : 0; }
 
 void vcpe_node3d_update(float dt)
