@@ -13,4 +13,8 @@ void vcpe_font_draw(const VcpeFont *f, float x, float y, const char *s, int max_
 /* centred lines ('\n' separated) around (cx, cy) */
 void vcpe_font_draw_centered(const VcpeFont *f, float cx, float cy, const char *s, int max_chars, uint32_t color, float scale);
 
+/* text in 3D, like a Godot Label3D: glyphs in the XY plane of the row-major world matrix m (facing +Z),
+ * vertically centred; size = metres per baked pixel; align 0 left, 1 centre, 2 right. Call inside vcpe_3d. */
+void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float size, uint32_t color, int align);
+
 #endif

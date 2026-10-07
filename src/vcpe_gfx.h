@@ -29,6 +29,7 @@ void vcpe_bundles_keep(const uint8_t *list, int n);   /* unload the others first
 
 /* cached state */
 int vcpe_bind_page(int page);   /* 0: its bundle is not loaded */
+void vcpe_page_size(int page, int *w, int *h);
 void vcpe_unbind(void);         /* the game bound a texture itself (fonts, LANG pages) */
 void vcpe_blend(int additive);
 void vcpe_tex_white(int on);    /* colour = vertex colour, alpha = texture alpha (font materials) */
