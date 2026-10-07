@@ -8,4 +8,7 @@
 #include "vcpe_test.h"
 #include "vcpe_gfx.h"
 #include "vcpe_3d.h"
+#include "vcpe_node3d.h"
+#include "vcpe_co.h"
+#include "vcpe_font.h"
 #endif

@@ -60,6 +60,18 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
     vcpe_stat_tris = 0;
 }
 
+void vcpe_3d_model(const float *m)
+{
+    sceGumMatrixMode(GU_MODEL);
+    if (!m) {
+        sceGumLoadIdentity();
+        return;
+    }
+    /* row-major (column vectors) -> the GU's layout: x, y, z, w are the columns */
+    ScePspFMatrix4 g = {{m[0], m[4], m[8], m[12]}, {m[1], m[5], m[9], m[13]}, {m[2], m[6], m[10], m[14]}, {m[3], m[7], m[11], m[15]}};
+    sceGumLoadMatrix(&g);
+}
+
 void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
 {
     if (page >= 0) {
@@ -75,6 +87,19 @@ void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
     vcpe_stat_tris += nidx / 3;
     if (page < 0)
         sceGuEnable(GU_TEXTURE_2D);
+}
+
+void vcpe_3d_alpha(float a)
+{
+    if (a >= 0.999f) {
+        sceGuDisable(GU_BLEND);
+        sceGuDepthMask(GU_FALSE);
+        return;
+    }
+    unsigned k = (unsigned)((a < 0 ? 0 : a) * 255.0f);
+    sceGuEnable(GU_BLEND);
+    sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, k | (k << 8) | (k << 16), (255 - k) | ((255 - k) << 8) | ((255 - k) << 16));
+    sceGuDepthMask(GU_TRUE);   /* see-through: no depth writes */
 }
 
 void vcpe_3d_end(void)
