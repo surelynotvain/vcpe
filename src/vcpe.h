@@ -3,6 +3,7 @@
 #ifndef VCPE_H
 #define VCPE_H
 #include "vcpe_sys.h"
+#include "vcpe_input.h"
 #include "vcpe_pak.h"
 #include "vcpe_audio.h"
 #include "vcpe_test.h"
