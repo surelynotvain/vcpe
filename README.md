@@ -44,6 +44,12 @@ A game compiles `src/` and, if it uses the runtime, `runtime/` together with its
 - Converter side (in progress): Godot 4 text scenes, mesh surfaces (octahedral normals, LOD index sets), world transforms, static lighting baked into vertex colours
 - [`tools/godot/`](tools/godot/): Godot 4 scene reader, world transforms, animated-node finder, `vcpe_vis`, which drops static triangles no camera pose ever sees (more than half of a typical scene), and `vcpe_shadow`, which bakes shadows into the vertex lighting
 
+### Input and conversion
+
+- `vcpe_input`: portable button-edge latching for fixed updates, shared controls and strict majority voting
+- `tools/vcpe_tga.py`: indexed/RLE TGA loading with palette alpha, origin handling and malformed-file checks
+- [Input and converter practices](docs/input-and-converters.md), with host test commands
+
 ### Next
 
 - 3D: skinned meshes, 16-bit vertex formats, loading and freeing areas of a scene while the screen is black
