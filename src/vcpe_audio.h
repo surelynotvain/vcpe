@@ -22,6 +22,9 @@ void vcpe_voice_gain(int voice, int gain256);
 int vcpe_voice_count(void);
 int vcpe_handle_voice(int handle);     /* the voice still playing that handle's sound, or -1 */
 void vcpe_voices_stop_all(void);
+/* play sound id on a free voice in [first, last] (a voice that is not playing, else the one started longest ago);
+ * returns a handle for vcpe_handle_voice, -1 when id is invalid. Reserve the other voices for music-like loops. */
+int vcpe_sfx_play(int id, float pitch, int gain256, int first, int last);
 
 /* music: play fades the current track out, then starts the new one (-1: silence) */
 void vcpe_music_play(int track);

@@ -112,7 +112,9 @@ void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float
     int pw, ph;
     vcpe_page_size(f->page, &pw, &ph);
     float su = 1.0f / pw, sv = 1.0f / ph;   /* 3D drawing takes normalised texture coordinates */
-    VcpeVtx *v = sceGuGetMemory(sizeof(VcpeVtx) * 6 * nchars);
+    VcpeVtx *v = vcpe_gfx_mem(sizeof(VcpeVtx) * 6 * nchars);
+    if (!v)
+        return;
     int n = 0;
     float y = lines * f->height * 0.5f;           /* top of the first line, in baked pixels (y up) */
     const char *p = s;
@@ -138,6 +140,7 @@ void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float
         y -= f->height;
     }
     if (!n) return;
+    vcpe_gfx_flush();
     vcpe_3d_model(m);
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);

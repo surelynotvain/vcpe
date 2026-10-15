@@ -8,6 +8,7 @@
 #include "w_anim.h"
 #include "aw_gfx.h"
 #include "w_hooks.h"
+#include "vcpe_sys.h"
 
 World W;
 
@@ -45,7 +46,9 @@ static int txt_n[32];
 void txt_load(void)
 {
     if (!str_mem) {
+        int st = vcpe_step_begin("Loading strings: %u KB", (unsigned)((STR_SIZE + 1023) / 1024));
         str_mem = vcpe_pak_read_alloc(STR_OFF, STR_SIZE);
+        vcpe_step_end(st, str_mem != 0);
         if (str_mem)
             str_count = *(uint32_t *)str_mem;
     }
@@ -108,7 +111,10 @@ static int blob_load(Blob *b, int index)
 {
     memset(b, 0, sizeof *b);
     const BlobDef *d = &g_worlds[index];
+    int st = index < NUM_SCENES ? vcpe_step_begin("Loading scene %d world: %u KB", index, (unsigned)(d->size / 1024))
+                                : vcpe_step_begin("Loading prefab %d: %u KB", index - NUM_SCENES, (unsigned)(d->size / 1024));
     b->mem = vcpe_pak_read_alloc(d->off, d->size);
+    vcpe_step_end(st, b->mem != 0);
     if (!b->mem)
         return -1;
     const WHeader *h = (const WHeader *)b->mem;
@@ -179,8 +185,10 @@ void w_build_children(void)
 
 void w_unload(void)
 {
+    int st = W.nobj ? vcpe_step_begin("Unloading scene %d: %d objects", W.scene, W.nobj) : -1;
     hooks_unload();
     free_world();
+    vcpe_step_end(st, 1);
     memset(&W, 0, sizeof W);
     memset(w_first_child, 0xFF, sizeof w_first_child);
     memset(w_next_sib, 0xFF, sizeof w_next_sib);
@@ -222,6 +230,7 @@ int w_load(int scene)
     Blob *b = &scene_blob;
     int ngo;
     const WGo *gos = blob_sec(b, TAG('G', 'O', 'B', 'J'), &ngo);
+    int st = vcpe_step_begin("Creating scene %d: %d objects", scene, ngo);
     W.scene = scene;
     W.nobj = ngo;
     for (int i = 0; i < ngo && i < MAX_OBJS; i++)
@@ -308,12 +317,15 @@ int w_load(int scene)
             }
         }
     }
+    vcpe_step_end(st, 1);
     W.camera = obj_find(name_crc("Main Camera"));
     W.ortho = (scene >= 12) ? 7.0f : 6.0f;
     W.pxu = 272.0f / (2.0f * W.ortho);
     gfx_scene_textures(scene);
+    st = vcpe_step_begin("Linking %d scripts", W.nscript);
     w_hierarchy();
     hooks_load();
+    vcpe_step_end(st, 1);
     return 0;
 }
 
