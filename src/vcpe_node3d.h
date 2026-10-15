@@ -45,6 +45,7 @@ float *vcpe_node3d_pos(int node);                    /* writable local position 
 float *vcpe_node3d_rot(int node);
 float *vcpe_node3d_scale(int node);
 void vcpe_node3d_world(int node, float out[16]);     /* world matrix (after vcpe_node3d_update) */
+void vcpe_node3d_refresh(void);                 /* update changed transforms without advancing animation */
 void vcpe_node3d_update(float dt);                   /* advance the players, then the world matrices */
 void vcpe_node3d_draw(uint32_t cull_mask);           /* every visible mesh node on those layers (inside vcpe_3d) */
 

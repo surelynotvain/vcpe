@@ -138,6 +138,7 @@ void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float
         y -= f->height;
     }
     if (!n) return;
+    vcpe_gfx_flush();
     vcpe_3d_model(m);
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
