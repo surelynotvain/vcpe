@@ -1,43 +1,194 @@
-VCPE Contribute-Back License, version 1.0
+VCPE CONTRIBUTE-BACK LICENSE
+Version 1.1
 
 Copyright (c) 2026 surelynotvain
 
-"VCPE" means Vain's C Portable Engine: every file in this repository (engine source, runtime, tools, docs and
-assets), in any version from 3.0 on, and any work based on those files. "Your project" means a game, demake,
-program or other work that uses VCPE. "Engine changes" means any change to VCPE files, and any new file that
-is part of the engine rather than of your project (a new engine module, tool or fix), in source form.
+PREAMBLE
 
-1. Permission. You may use, copy, build, run and distribute VCPE, alone or as part of your project, free of
-   charge, under the conditions below.
+Vain's C Portable Engine is free to use in any project, including commercial and closed-source games. In return,
+improvements to the engine itself flow back to it, so that everyone who uses it benefits from what others fix.
+This license keeps those two promises apart: the engine stays shared, and your own project stays yours.
 
-2. Contribute your engine changes back. If you distribute your project, or VCPE itself, with engine changes,
-   you must submit those engine changes as a pull request to https://github.com/surelynotvain/vcpe (or the
-   location the copyright holder names there). Submit them no later than the first public distribution that
-   contains them. You grant the copyright holder a perpetual, worldwide, royalty-free license to use, modify
-   and relicense what you submit. Whether a pull request is merged is up to the copyright holder; once it is
-   submitted, you have met this condition.
 
-3. Your own code stays yours. Your project's own code, art, data and other content are not engine changes.
-   This license does not require you to publish them or send them to anyone.
+1. DEFINITIONS
 
-4. Credit. Your project's credits, readme or about screen must state that it uses Vain's C Portable Engine
-   (VCPE) by surelynotvain.
+1.1  "Licensor" means surelynotvain, the copyright holder of the Engine.
 
-5. Notice. Copies of VCPE source must keep this license and the copyright notice above.
+1.2  "Engine" means Vain's C Portable Engine (VCPE), version 3.0 or later, as published by the Licensor at
+     https://github.com/surelynotvain/vcpe or a successor location named there: its source code, runtime, tools,
+     build files, tests and documentation, excluding Third-Party Material.
 
-6. Third-party material. Material in VCPE that comes from third parties remains under its owners' terms and
-   is not licensed by this license: the pictures in engineassets/ and the image data generated from them
-   (src/vcpe_errimg.h, src/vcpe_loadimg.h), and libraries VCPE uses from the pspdev toolchain (such as
-   stb_truetype). Replace those pictures with your own if their terms do not allow your use.
+1.3  "Engine File" means any file of the Engine, and any file derived from one, whether modified, renamed,
+     moved, split or merged into another file.
 
-7. Termination. If you break these conditions, your permission ends. It is restored if you fix the breach
-   within 30 days of being notified.
+1.4  "Engine Change" means any of the following, in source form:
+     (a) a modification of an Engine File;
+     (b) a new file that extends or replaces Engine functionality rather than implementing Your Project, such as
+         a new engine module, a replacement for an engine module, a converter tool for engine formats, or a fix
+         or port of the Engine to another platform or toolchain.
 
-8. No warranty. VCPE is provided "as is", without warranty of any kind, express or implied, including the
-   warranties of merchantability, fitness for a particular purpose and non-infringement. In no event shall the
-   authors or copyright holders be liable for any claim, damages or other liability, whether in an action of
-   contract, tort or otherwise, arising from, out of or in connection with VCPE or the use of or other dealings
-   in VCPE.
+1.5  "Your Project" means a game, application or other work that uses the Engine, excluding the Engine Files
+     it contains. Your Project's own code, art, audio, text, levels and data are part of Your Project, however
+     they are compiled, linked or packaged together with the Engine.
 
-VCPE 1.0 and 2.0 were released under the MIT license, and the copies of them already released keep that
-license. This license applies to VCPE 3.0 and every later version.
+1.6  "Distribute" means to make a copy available to anyone other than You, in source or binary form, by any
+     means, including publishing a download, an EBOOT, a disc or memory-stick image, or a hosted service.
+     Sharing within a single legal entity, or with contractors working on Your behalf under confidentiality,
+     is not Distribution.
+
+1.7  "Contribution" means any work submitted to the Licensor for inclusion in the Engine, including under
+     Section 4.
+
+1.8  "Contributor" means the Licensor and every person or entity whose Contribution has been included in the
+     Engine.
+
+1.9  "Third-Party Material" means material in the Engine that is not owned by the Licensor or a Contributor,
+     as listed in Section 9.
+
+1.10 "You" means the person or legal entity exercising rights under this license.
+
+
+2. COPYRIGHT LICENSE
+
+Subject to the conditions of this license, each Contributor grants You a worldwide, royalty-free,
+non-exclusive license to use, reproduce, modify, build, run, display, perform and Distribute the Engine and
+Engine Changes, alone or as part of Your Project.
+
+
+3. PATENT LICENSE
+
+3.1  Subject to the conditions of this license, each Contributor grants You a worldwide, royalty-free,
+     non-exclusive license under the patent claims it controls that are necessarily infringed by its
+     Contribution, alone or in combination with the Engine, to make, use, sell, offer for sale, import and
+     otherwise transfer the Engine and Your Project.
+
+3.2  If You start patent litigation (including a cross-claim or counterclaim) alleging that the Engine or a
+     Contribution infringes a patent, every license granted to You under this license ends on the date that
+     litigation is filed.
+
+
+4. CONDITIONS
+
+4.1  Contribute Engine Changes back.
+     If You Distribute anything that contains or was built from an Engine Change, You must submit that Engine
+     Change to the Licensor:
+     (a) when: no later than 30 days after the first Distribution that contains it;
+     (b) how: as a pull request to the Engine's repository, or, if a pull request is not possible for You, as a
+         patch attached to an issue there or sent to the Licensor by another channel named in the repository;
+     (c) what: the complete source of the Engine Change, in a form the Licensor can apply to the Engine version
+         it is based on, with any build settings it needs and a short description of what it changes and how it
+         was tested.
+     The obligation is met once the submission is made, whether or not the Licensor accepts it. Engine Changes
+     that You never Distribute carry no obligation. Submitting an Engine Change does not oblige You to publish
+     it anywhere else.
+
+4.2  Your Project stays Yours.
+     Nothing in this license requires You to publish, disclose or license any part of Your Project. Linking,
+     compiling or packaging Your Project together with the Engine, statically or otherwise, does not make
+     Your Project an Engine Change.
+
+4.3  Attribution.
+     Your Project's credits, about screen, readme or accompanying documentation must state:
+         "Uses Vain's C Portable Engine (VCPE) by surelynotvain."
+     or an equivalent statement in the language of Your Project. If Your Project shows credits in game, the
+     statement must appear there.
+
+4.4  Notices.
+     Copies of Engine Files in source form must keep this license, the copyright notice and any notices in
+     those files. Modified Engine Files must carry a prominent statement that they were changed.
+
+4.5  Names.
+     This license grants no rights to the names "VCPE" or "Vain's C Portable Engine" or the Licensor's name,
+     except for the attribution required by Section 4.3 and for describing Your Project truthfully as using
+     the Engine. You may not imply that the Licensor endorses Your Project, or Distribute a modified Engine
+     under the Engine's name without stating that it is modified.
+
+
+5. CONTRIBUTIONS
+
+5.1  License to the Licensor. By submitting a Contribution, You grant the Licensor a perpetual, worldwide,
+     royalty-free, non-exclusive, irrevocable license to use, modify, sublicense and relicense the
+     Contribution, as part of the Engine or otherwise, and You grant every recipient of the Engine the
+     licenses in Sections 2 and 3 for it.
+
+5.2  Representations. By submitting a Contribution, You state that:
+     (a) You have the right to submit it under this license;
+     (b) it contains no material taken from a game, its data or its decompiled code, and no other material You
+         are not allowed to license this way;
+     (c) any part produced with the help of an AI system is disclosed as such in the submission, and You have
+         reviewed it and take the same responsibility for it as for work You wrote yourself.
+
+5.3  No obligation. The Licensor is not required to accept, review or maintain any Contribution.
+
+
+6. INDEPENDENT AND INTERNAL USE
+
+6.1  Using the Engine for learning, testing, research or private builds that are never Distributed is always
+     permitted, with no obligation under Section 4.1.
+
+6.2  This license does not restrict rights You have under applicable law that cannot be restricted by
+     contract, such as fair use, or reverse engineering for interoperability where the law allows it.
+
+
+7. TERMINATION
+
+7.1  Your rights under this license end automatically if You fail to comply with it.
+
+7.2  They are reinstated:
+     (a) provisionally, from the day You end the breach, unless and until the Licensor ends them explicitly;
+     (b) permanently, if the Licensor has not notified You of the breach within 60 days after You ended it, or
+         if You end the breach within 30 days after first receiving such a notice from the Licensor.
+
+7.3  Termination does not affect licenses that recipients received from You before it, provided they comply
+     with this license. Sections 5, 8 and 10 survive termination.
+
+
+8. DISCLAIMER OF WARRANTY
+
+THE ENGINE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. PARTS OF THE ENGINE
+WERE PRODUCED WITH AI ASSISTANCE (SEE AI_POLICY.md); THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE
+ENGINE, AND OF ITS EFFECT ON ANY HARDWARE IT RUNS ON, IS WITH YOU.
+
+
+9. THIRD-PARTY MATERIAL
+
+The following are not owned by the Licensor or the Contributors and are not licensed under this license. They
+remain under their owners' terms, and it is Your responsibility to have the right to use them:
+     (a) the pictures in engineassets/, and the image data generated from them in src/vcpe_errimg.h and
+         src/vcpe_loadimg.h. Replace them with Your own pictures (the tools in tools/ rebuild the headers) if
+         their owners' terms do not permit Your use;
+     (b) libraries the Engine uses from the pspdev toolchain or elsewhere without including them, such as the
+         PSP SDK, newlib and stb_truetype, and the Lua interpreter that Your Project supplies;
+     (c) any game, game data or trademark that Your Project uses. The Engine includes none, and this license
+         grants no rights to them.
+
+
+10. LIMITATION OF LIABILITY
+
+IN NO EVENT SHALL THE LICENSOR OR ANY CONTRIBUTOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL OR CONSEQUENTIAL DAMAGES, LOSS OF DATA OR DAMAGE TO HARDWARE, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE ENGINE OR THE USE OF OR
+OTHER DEALINGS IN THE ENGINE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+
+11. VERSIONS OF THIS LICENSE
+
+11.1 The Licensor may publish revised versions of this license. Each version has a distinguishing number.
+
+11.2 You may use an Engine release under the version of this license it was released with, or under any later
+     version published by the Licensor.
+
+11.3 Engine releases 3.0, 3.3, 3.5 and 4.0 were released with version 1.0 of this license; version 1.1 may be
+     used for them instead. Engine releases 1.0 and 2.0 were released under the MIT license and remain
+     available under it.
+
+
+12. GENERAL
+
+12.1 If any provision of this license is held unenforceable, it shall be reformed only to the extent necessary
+     to make it enforceable, and the remaining provisions stay in effect.
+
+12.2 Failure to enforce a provision is not a waiver of it.
+
+12.3 This license is the complete agreement concerning its subject. Headings are for convenience only.
