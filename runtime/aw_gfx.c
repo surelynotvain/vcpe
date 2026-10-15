@@ -1,4 +1,4 @@
-/* GU renderer: paletted (CLUT) swizzled texture pages streamed from AW.PAK. */
+/* GU renderer: paletted (CLUT) swizzled texture pages streamed from the data PAK. */
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
@@ -13,7 +13,7 @@
 
 
 
-/* language data (LANG.PAK or the built-in English copy in AW.PAK): fonts, text files, scene string translations */
+/* language data (LANG.PAK or the built-in English copy in the data PAK): fonts, text files, scene string translations */
 typedef struct {
     char magic[4];
     uint32_t version;
@@ -41,7 +41,14 @@ void gfx_shutdown(void) { vcpe_gfx_shutdown(); }
 
 void gfx_begin(uint32_t clear) { vcpe_gfx_begin(clear); }
 
-void gfx_end(void) { vcpe_gfx_end(); }
+int gfx_perf_overlay;   /* the game sets it while the player holds the overlay button */
+
+void gfx_end(void)
+{
+    if (gfx_perf_overlay)
+        vcpe_hud_perf();
+    vcpe_gfx_end();
+}
 
 
 
@@ -51,6 +58,16 @@ int gfx_pak_open(const char *path)
     int fd = vcpe_pak_open(path);
     if (fd < 0)
         return fd;
+    if (vcpe_mem_32mb()) {
+        /* PSP-1000: the scene bundles take turns in one fixed block (a 9 MB scene must fit where an 8 MB one was),
+         * and the common pages go to the 4 MB volatile partition when they fit there */
+        if (NUM_BUNDLES > 1 && vcpe_bundle_slab(1, NUM_BUNDLES - 1) < 0)
+            return -1;
+        uint32_t vsize;
+        uint8_t *vmem = vcpe_volatile_mem(&vsize);
+        if (vmem && vcpe_bundle_load_at(0, vmem, vsize, 1) == 0)
+            return 0;
+    }
     return vcpe_bundle_load(0);
 }
 
@@ -96,11 +113,17 @@ int gfx_lang_load(const char *path, int use_file)
     }
     if (!m) {
         size = LANG_SIZE;
+        int st = vcpe_step_begin("Loading text: English (built in), %u KB", (unsigned)(LANG_SIZE / 1024));
         m = vcpe_pak_read_alloc(LANG_OFF, LANG_SIZE);
+        vcpe_step_end(st, lang_ok(m, size));
         if (!lang_ok(m, size))
             return -1;
+    } else {
+        vcpe_step_note(VCPE_STEP_OK, "Loading text: %s (LANG.PAK), %u KB", ((const LangHdr *)m)->name,
+                       (unsigned)(size / 1024));
     }
     sceKernelDcacheWritebackRange(m, size);
+    vcpe_gfx_gpu_wait();   /* pipelining: the frame on the GE may still read the old font pages */
     free(lang);
     lang = m;
     const LangHdr *h = (const LangHdr *)m;
@@ -162,7 +185,7 @@ int gfx_scene_textures(int scene)
 {
     if (scene == cur_scene)
         return 0;
-    sceGuSync(0, 0);
+    vcpe_gfx_gpu_wait();
     for (int b = 1; b < NUM_BUNDLES; b++)
         if (vcpe_bundle_loaded(b) && b != 1 + scene)
             vcpe_bundle_unload(b);
@@ -177,6 +200,9 @@ int gfx_scene_textures(int scene)
     cur_scene = scene;
     return (b < NUM_BUNDLES && !vcpe_bundle_loaded(b)) ? -1 : 0;
 }
+
+/* the current scene's pages are in memory */
+int gfx_scene_ok(void) { return cur_scene < 0 || 1 + cur_scene >= NUM_BUNDLES || vcpe_bundle_loaded(1 + cur_scene); }
 
 int gfx_sprite_ok(int spr) { return spr >= 0 && spr < NUM_SPRITES && spr_n[spr] > 0; }
 
@@ -217,6 +243,7 @@ void gfx_sprite_affine(int spr, float A, float B, float C, float D, float TX, fl
         }
         vcpe_stat_quads++;
         vcpe_stat_area += fabsf(A * D - B * C) * p->w * p->h;
+        vcpe_gfx_flush();   /* batched quads before this raw draw */
         VcpeVtx *v = sceGuGetMemory(4 * sizeof(VcpeVtx));
         float px[4] = {lx0, lx1, lx0, lx1}, py[4] = {ly0, ly0, ly1, ly1};
         float uu[4] = {u0, u1, u0, u1}, vv[4] = {v0, v0, v1, v1};
@@ -359,6 +386,7 @@ float gfx_text_mirror(int fset, float x, float y, const char *s, int len, uint32
     float baseline = floorf(y + gfx_font_ascent(fset) + 0.5f);
     set_mode(0);
     vcpe_filter(1);
+    vcpe_gfx_flush();   /* batched quads of the bound page first: the glyph page is bound with raw sceGu calls */
     sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
     sceGuClutLoad(32, fclut);
     sceGuTexMode(GU_PSM_T8, 0, 0, 1);
@@ -371,6 +399,7 @@ float gfx_text_mirror(int fset, float x, float y, const char *s, int len, uint32
         if (g->w) {
             if (g->page != cur) {
                 const FontPage *fp = &fpages[g->page];
+                vcpe_gfx_flush();
                 sceGuTexImage(0, fp->w, fp->h, fp->w, font_mem + fp->off);
                 sceGuTexFlush();
                 cur = g->page;

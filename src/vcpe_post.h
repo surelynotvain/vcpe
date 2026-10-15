@@ -12,6 +12,7 @@ void vcpe_post_curves(const uint8_t r[256], const uint8_t g[256], const uint8_t 
 void vcpe_post_posterize(int levels);    /* curves: floor(v * levels) / levels on every channel */
 void vcpe_post_grain(int amount);        /* film grain added before the curves (0..255, 0 = off); it dithers
                                           * posterized bands; the curves should expect values raised by amount / 2 */
+void vcpe_post_dither(int amount);       /* like grain but a fixed 4x4 ordered (Bayer) pattern: still, PS1-like */
 void vcpe_post_begin(void);              /* inside a frame, before the 3D: draw off-screen (cleared to black) */
 void vcpe_post_end(void);                /* apply the curves into the frame buffer; drawing goes on there */
 #endif

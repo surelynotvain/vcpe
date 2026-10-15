@@ -6,10 +6,13 @@
 
 #define MAX_CO 48
 #define CO_STACK (32 * 1024)
+#ifndef VCPE_CO_POOL
+#define VCPE_CO_POOL 8   /* 4.0: threads of the first slots stay parked after their coroutine ends, for reuse */
+#endif
 
 typedef struct {
-    int used, started, done;
-    SceUID thread, wake;       /* the coroutine sleeps on "wake" until the scheduler hands over */
+    int used, done;
+    SceUID thread, wake;       /* the coroutine sleeps on "wake" until the scheduler hands over; thread 0: none */
     VcpeCoFn fn;
     void *arg;
     double until;              /* resume at this game time (0: next update) */
@@ -27,11 +30,16 @@ static int co_index(int id) { int i = id & 0xFF; return (i < MAX_CO && co[i].use
 static int entry(SceSize len, void *argp)
 {
     int i = *(int *)argp;
-    sceKernelWaitSema(co[i].wake, 1, 0);
-    co[i].fn(co[i].arg);
-    co[i].done = 1;
-    current = -1;
-    sceKernelSignalSema(back, 1);
+    for (;;) {
+        sceKernelWaitSema(co[i].wake, 1, 0);
+        co[i].fn(co[i].arg);
+        co[i].done = 1;
+        current = -1;
+        sceKernelSignalSema(back, 1);
+        if (i >= VCPE_CO_POOL)
+            break;
+        /* pooled: park until the slot is given a new coroutine (thread create/delete costs a hitch) */
+    }
     sceKernelExitDeleteThread(0);
     return 0;
 }
@@ -44,16 +52,23 @@ int vcpe_co_start(VcpeCoFn fn, void *arg)
         if (co[i].used)
             continue;
         int gen = co[i].gen + 1;
+        SceUID thread = co[i].thread, wake = co[i].wake;
         memset(&co[i], 0, sizeof co[i]);
         co[i].gen = gen & 0xFFFFFF;
         co[i].used = 1;
         co[i].fn = fn;
         co[i].arg = arg;
         co[i].join = -1;
+        if (thread > 0) {   /* a parked thread waits on its semaphore already */
+            co[i].thread = thread;
+            co[i].wake = wake;
+            return co_id(i);
+        }
         co[i].wake = sceKernelCreateSema("vcpe_co", 0, 0, 1, 0);
         co[i].thread = sceKernelCreateThread("vcpe_co", entry, 0x20, CO_STACK, PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, 0);
         if (co[i].thread < 0) {
             sceKernelDeleteSema(co[i].wake);
+            co[i].thread = co[i].wake = 0;
             co[i].used = 0;
             return -1;
         }
@@ -61,6 +76,16 @@ int vcpe_co_start(VcpeCoFn fn, void *arg)
         return co_id(i);
     }
     return -1;
+}
+
+/* a coroutine has ended: its slot is free; a pooled thread stays parked, any other has exited */
+static void release(int i)
+{
+    if (i >= VCPE_CO_POOL) {
+        sceKernelDeleteSema(co[i].wake);
+        co[i].thread = co[i].wake = 0;
+    }
+    co[i].used = 0;
 }
 
 /* hand the CPU back to the scheduler and sleep until resumed */
@@ -118,8 +143,7 @@ void vcpe_co_update(float dt)
         if (!co[i].used)
             continue;
         if (co[i].done) {
-            sceKernelDeleteSema(co[i].wake);
-            co[i].used = 0;
+            release(i);
             continue;
         }
         if (co[i].join >= 0 && vcpe_co_alive(co[i].join))
@@ -129,10 +153,8 @@ void vcpe_co_update(float dt)
         current = i;
         sceKernelSignalSema(co[i].wake, 1);
         sceKernelWaitSema(back, 1, 0);
-        if (co[i].done) {
-            sceKernelDeleteSema(co[i].wake);
-            co[i].used = 0;
-        }
+        if (co[i].done)
+            release(i);
     }
 }
 
@@ -141,10 +163,25 @@ void vcpe_co_reset(void)
     for (int i = 0; i < MAX_CO; i++) {
         if (!co[i].used)
             continue;
-        if (!co[i].done)
+        if (!co[i].done) {   /* stopped in the middle: that thread can't be reused */
             sceKernelTerminateDeleteThread(co[i].thread);
-        sceKernelDeleteSema(co[i].wake);
-        co[i].used = 0;
+            sceKernelDeleteSema(co[i].wake);
+            co[i].thread = co[i].wake = 0;
+            co[i].used = 0;
+        } else {
+            release(i);
+        }
     }
     current = -1;
+}
+
+void vcpe_co_shutdown(void)
+{
+    vcpe_co_reset();
+    for (int i = 0; i < MAX_CO; i++)
+        if (co[i].thread > 0) {   /* parked on its semaphore */
+            sceKernelTerminateDeleteThread(co[i].thread);
+            sceKernelDeleteSema(co[i].wake);
+            co[i].thread = co[i].wake = 0;
+        }
 }
