@@ -11,13 +11,27 @@
 #define OFF_OFFSET (2 * FB_SIZE + BUF_W * VCPE_SCR_H * 2)   /* after the two frame buffers and the 16-bit depth buffer */
 
 static uint32_t __attribute__((aligned(64))) clut[3][256];   /* colours with only their own channel set */
-static int active, grain;
+static int active, grain, grain_still;
 static uint32_t __attribute__((aligned(64))) noise[32 * 32];   /* grey noise tile, alpha unused */
 static unsigned seed = 12345;
+
+void vcpe_post_dither(int amount)
+{
+    static const int bayer[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+    grain = amount < 0 ? 0 : amount > 255 ? 255 : amount;
+    grain_still = 1;
+    for (int y = 0; y < 32; y++)
+        for (int x = 0; x < 32; x++) {
+            uint32_t v = (uint32_t)(bayer[y & 3][x & 3] * 255 + 7) / 15;
+            noise[y * 32 + x] = 0xFF000000u | v | v << 8 | v << 16;
+        }
+    sceKernelDcacheWritebackRange(noise, sizeof noise);
+}
 
 void vcpe_post_grain(int amount)
 {
     grain = amount < 0 ? 0 : amount > 255 ? 255 : amount;
+    grain_still = 0;
     for (int i = 0; i < 32 * 32; i++) {
         seed = seed * 1103515245u + 12345u;
         uint32_t v = (seed >> 16) & 0xFF;
@@ -49,6 +63,7 @@ void vcpe_post_posterize(int levels)
 
 void vcpe_post_begin(void)
 {
+    vcpe_gfx_flush();
     sceGuDrawBufferList(GU_PSM_8888, (void *)OFF_OFFSET, BUF_W);
     sceGuClearColor(0xFF000000);
     sceGuClear(GU_COLOR_BUFFER_BIT);
@@ -59,6 +74,7 @@ void vcpe_post_end(void)
 {
     if (!active)
         return;
+    vcpe_gfx_flush();
     active = 0;
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_ALPHA_TEST);
@@ -75,8 +91,12 @@ void vcpe_post_end(void)
         sceGuEnable(GU_BLEND);
         uint32_t a = (uint32_t)grain * 0x010101u;
         sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, a, 0xFFFFFFFF);
-        seed = seed * 1103515245u + 12345u;
-        float ou = (float)((seed >> 8) & 31), ov = (float)((seed >> 16) & 31);
+        float ou = 0, ov = 0;
+        if (!grain_still) {
+            seed = seed * 1103515245u + 12345u;
+            ou = (float)((seed >> 8) & 31);
+            ov = (float)((seed >> 16) & 31);
+        }
         VcpeVtx *v = sceGuGetMemory(2 * sizeof(VcpeVtx));
         v[0].u = ou; v[0].v = ov; v[0].color = 0xFFFFFFFF; v[0].x = 0; v[0].y = 0; v[0].z = 0;
         v[1].u = ou + VCPE_SCR_W; v[1].v = ov + VCPE_SCR_H; v[1].color = 0xFFFFFFFF; v[1].x = VCPE_SCR_W; v[1].y = VCPE_SCR_H; v[1].z = 0;

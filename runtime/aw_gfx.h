@@ -1,4 +1,4 @@
-/* GU renderer for the Awaria port: paletted swizzled pages from AW.PAK, affine sprites, glyph text. */
+/* GU renderer of the 2D runtime: paletted swizzled pages from the data PAK, affine sprites, glyph text. */
 #ifndef AW_GFX_H
 #define AW_GFX_H
 #include <stdint.h>

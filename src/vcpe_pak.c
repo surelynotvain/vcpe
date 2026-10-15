@@ -3,11 +3,12 @@
 #include <pspiofilemgr.h>
 #include <malloc.h>
 #include <stdio.h>
+#include <string.h>
 #include "vcpe_sys.h"
 #include "vcpe_pak.h"
 
 static int pak_fd = -1;
-static char pak_path[256];
+static char pak_path[300];
 static int pak_gen;
 
 static void pak_reopen(void)
@@ -24,6 +25,29 @@ int vcpe_pak_open(const char *path)
     pak_gen = vcpe_resume_gen;
     pak_fd = sceIoOpen(path, PSP_O_RDONLY, 0);
     return pak_fd;
+}
+
+void vcpe_pak_open_checked(const char *file, const char *title, const char *magic, uint32_t size, uint32_t stamp)
+{
+    char p[300], msg[600];
+    vcpe_path(p, sizeof p, file);
+    if (vcpe_pak_open(p) < 0) {
+        snprintf(msg, sizeof msg, "%s is missing.\n\nCopy %s next to EBOOT.PBP (all files of the same build).", file, file);
+        vcpe_fatal(title, msg);
+    }
+    struct { char magic[4]; uint32_t size, stamp; } h;
+    int bad = vcpe_pak_read(0, &h, sizeof h) || (magic && memcmp(h.magic, magic, 4));
+    if (!bad && size) {
+        int end = sceIoLseek32(pak_fd, 0, PSP_SEEK_END);
+        bad = h.size != size || end < 0 || (uint32_t)end < size;
+    }
+    if (!bad && stamp)
+        bad = h.stamp != stamp;
+    if (bad) {
+        snprintf(msg, sizeof msg, "%s does not match this EBOOT.PBP (an incomplete copy, or a file from another "
+                 "version).\n\nCopy EBOOT.PBP and all the PAK files again, all from the same build.", file);
+        vcpe_fatal(title, msg);
+    }
 }
 
 void vcpe_pak_close(void)

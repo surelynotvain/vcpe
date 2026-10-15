@@ -4,24 +4,40 @@
 #include <pspgu.h>
 #include <malloc.h>
 #include <string.h>
+#include "vcpe_sys.h"
 #include "vcpe_pak.h"
 #include "vcpe_gfx.h"
 
 #define BUF_W 512
 #define FB_SIZE (BUF_W * VCPE_SCR_H * 4)
-#define MAX_BUNDLES 64
+#ifndef MAX_BUNDLES
+#define MAX_BUNDLES 64   /* games with more texture bundles pass -DMAX_BUNDLES=n (page tables hold up to 255) */
+#endif
 
 static unsigned int __attribute__((aligned(64))) dlist[512 * 1024 / 4];
 static const VcpePage *pages;
 static const VcpeBundle *bundles;
 static int nbundles;
 static uint8_t *bundle_mem[MAX_BUNDLES];
+static uint8_t bundle_attached[MAX_BUNDLES];   /* game memory: not ours to free */
+static int vsync = 1;
+static int pipeline, pending;     /* pipeline: a finished list is queued on the GE, not shown yet */
+static int batch_on, batch_kind, batch_n;   /* batch_kind 1: textured sprites (VcpeVtx), 2: colour sprites (VcpeCVtx) */
+#define BATCH_MAX 1024            /* vertices (two per rectangle) */
+static VcpeVtx batch_t[BATCH_MAX];
+static VcpeCVtx batch_c[BATCH_MAX];
 static int bound_page = -2, bound_mode = -1, bound_white = -1, bound_filter = -1;
 static uint32_t draw_offset;   /* VRAM offset of the buffer being drawn this frame */
 
 uint32_t vcpe_gfx_draw_offset(void) { return draw_offset; }
-void vcpe_gfx_state_reset(void) { bound_page = -2; bound_mode = -1; bound_white = -1; bound_filter = -1; }
-int vcpe_stat_binds, vcpe_stat_quads;
+void vcpe_gfx_state_reset(void)
+{
+    vcpe_gfx_flush();
+    bound_page = -2; bound_mode = -1; bound_white = -1; bound_filter = -1;
+}
+uint32_t vcpe_gfx_frame;   /* frames begun (caches that must not change memory the current frame uses) */
+int vcpe_stat_binds, vcpe_stat_quads, vcpe_stat_draws, vcpe_stat_fps, vcpe_stat_build_us, vcpe_stat_gpu_wait_us;
+int vcpe_bind_epoch;   /* bumped whenever this module changes the bound texture / CLUT (other binders compare it) */
 float vcpe_stat_area;
 
 int vcpe_gfx_init(void)
@@ -53,6 +69,7 @@ int vcpe_gfx_init(void)
 
 void vcpe_gfx_shutdown(void)
 {
+    vcpe_gfx_pipeline(0);
     sceGuTerm();
     vcpe_pak_close();
 }
@@ -64,15 +81,90 @@ void vcpe_gfx_tables(const VcpePage *p, const VcpeBundle *b, int nb)
     nbundles = nb > MAX_BUNDLES ? MAX_BUNDLES : nb;
 }
 
-static SceInt64 frame_t0;
+static SceInt64 frame_t0, fps_t0;
+static int fps_frames;
 int vcpe_stat_frame_us;   /* last frame: vcpe_gfx_begin until the GPU finished (vblank wait not included) */
+
+/* ------------------------------------------------------------------ batches */
+void vcpe_gfx_flush(void)
+{
+    if (!batch_n)
+        return;
+    if (batch_kind == 1) {
+        VcpeVtx *v = sceGuGetMemory(batch_n * sizeof(VcpeVtx));
+        memcpy(v, batch_t, batch_n * sizeof(VcpeVtx));
+        sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, batch_n, 0, v);
+    } else {
+        VcpeCVtx *v = sceGuGetMemory(batch_n * sizeof(VcpeCVtx));
+        memcpy(v, batch_c, batch_n * sizeof(VcpeCVtx));
+        sceGuDisable(GU_TEXTURE_2D);
+        sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, batch_n, 0, v);
+        sceGuEnable(GU_TEXTURE_2D);
+    }
+    vcpe_stat_draws++;
+    batch_n = 0;
+}
+
+void vcpe_gfx_batch(int on)
+{
+    vcpe_gfx_flush();
+    batch_on = on;
+}
+
+/* ------------------------------------------------------------------ frames */
+static void fps_tick(void)
+{
+    SceInt64 t = sceKernelGetSystemTimeWide();
+    if (++fps_frames >= 30 || t - fps_t0 > 1000000) {
+        vcpe_stat_fps = (int)((fps_frames * 1000000LL + (t - fps_t0) / 2) / (t - fps_t0 + 1));
+        fps_frames = 0;
+        fps_t0 = t;
+    }
+}
+
+void vcpe_gfx_gpu_wait(void)
+{
+    if (pending == 1) {
+        SceInt64 t = sceKernelGetSystemTimeWide();
+        sceGuSync(0, 0);
+        vcpe_stat_gpu_wait_us = (int)(sceKernelGetSystemTimeWide() - t);
+        vcpe_stat_frame_us = vcpe_stat_build_us + vcpe_stat_gpu_wait_us;
+        pending = 2;   /* drawn, not shown */
+    }
+}
+
+void vcpe_gfx_present(void)
+{
+    if (!pending)
+        return;
+    vcpe_gfx_gpu_wait();
+    if (vsync)
+        sceDisplayWaitVblankStart();
+    draw_offset = (uint32_t)(uintptr_t)sceGuSwapBuffers();
+    pending = 0;
+    fps_tick();
+}
+
+int vcpe_gfx_pending(void) { return pending != 0; }
+
+void vcpe_gfx_pipeline(int on)
+{
+    if (!on)
+        vcpe_gfx_present();
+    pipeline = on;
+    vcpe_present_hook = on ? vcpe_gfx_present : 0;   /* autotest reads and fatal screens show the last frame first */
+}
 
 void vcpe_gfx_begin(uint32_t clear)
 {
+    vcpe_gfx_present();
     frame_t0 = sceKernelGetSystemTimeWide();
+    vcpe_gfx_frame++;
+    vcpe_stat_draws = 0;
     sceGuStart(GU_DIRECT, dlist);
     sceGuClearColor(clear);
     sceGuClear(GU_COLOR_BUFFER_BIT);
+    vcpe_bind_epoch++;
     bound_page = -2;
     bound_mode = -1;
     bound_white = -1;
@@ -81,12 +173,23 @@ void vcpe_gfx_begin(uint32_t clear)
 
 void vcpe_gfx_end(void)
 {
+    vcpe_gfx_flush();
     sceGuFinish();
+    if (pipeline) {
+        /* the GE draws this frame while the game updates the next one; vcpe_gfx_begin shows it */
+        vcpe_stat_build_us = (int)(sceKernelGetSystemTimeWide() - frame_t0);
+        pending = 1;
+        return;
+    }
     sceGuSync(0, 0);
     vcpe_stat_frame_us = (int)(sceKernelGetSystemTimeWide() - frame_t0);
-    sceDisplayWaitVblankStart();
+    if (vsync)
+        sceDisplayWaitVblankStart();
     draw_offset = (uint32_t)(uintptr_t)sceGuSwapBuffers();   /* the next frame draws into the other one */
+    fps_tick();
 }
+
+void vcpe_gfx_vsync(int on) { vsync = on; }
 
 /* ------------------------------------------------------------------ bundles */
 int vcpe_bundle_loaded(int b) { return b >= 0 && b < nbundles && bundle_mem[b] != 0; }
@@ -102,12 +205,25 @@ int vcpe_bundle_load(int b)
     return bundle_mem[b] ? 0 : -1;
 }
 
+void vcpe_bundle_attach(int b, uint8_t *mem)
+{
+    if (b < 0 || b >= nbundles)
+        return;
+    vcpe_bundle_unload(b);
+    bundle_mem[b] = mem;
+    bundle_attached[b] = mem != 0;
+}
+
 void vcpe_bundle_unload(int b)
 {
     if (b < 0 || b >= nbundles || !bundle_mem[b])
         return;
+    vcpe_gfx_flush();
+    vcpe_gfx_gpu_wait();
     sceGuSync(0, 0);
-    free(bundle_mem[b]);
+    if (!bundle_attached[b])
+        free(bundle_mem[b]);
+    bundle_attached[b] = 0;
     bundle_mem[b] = 0;
     bound_page = -2;
 }
@@ -134,7 +250,9 @@ int vcpe_bind_page(int p)
 {
     if (p == bound_page)
         return 1;
+    vcpe_gfx_flush();
     vcpe_stat_binds++;
+    vcpe_bind_epoch++;
     const VcpePage *pg = &pages[p];
     uint8_t *base = bundle_mem[pg->bundle];
     if (!base)
@@ -143,23 +261,41 @@ int vcpe_bind_page(int p)
         sceGuClutMode(GU_PSM_8888, 0, 0x0f, 0);
         sceGuClutLoad(2, base + pg->clut);
         sceGuTexMode(GU_PSM_T4, 0, 0, pg->swz);
-    } else {
+    } else if (pg->psm == 8) {
         sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
         sceGuClutLoad(32, base + pg->clut);
         sceGuTexMode(GU_PSM_T8, 0, 0, pg->swz);
+    } else if (pg->psm == 16 || pg->psm == 32) {
+        sceGuTexMode(pg->psm == 16 ? GU_PSM_4444 : GU_PSM_8888, 0, 0, pg->swz);
+    } else {
+        return 0;
     }
-    sceGuTexImage(0, pg->w, pg->h, pg->w, base + pg->data);
+    if (pg->nmips) {
+        /* mipmapped (3D): the levels follow the full-size image; the GE picks one by distance */
+        int bpp2 = pg->psm == 4 ? 1 : pg->psm == 8 ? 2 : pg->psm == 16 ? 4 : 8;
+        uint32_t off = pg->data;
+        int mode = pg->psm == 4 ? GU_PSM_T4 : pg->psm == 8 ? GU_PSM_T8 : pg->psm == 16 ? GU_PSM_4444 : GU_PSM_8888;
+        sceGuTexMode(mode, pg->nmips, 0, pg->swz);
+        for (int l = 0; l <= pg->nmips; l++) {
+            int w = pg->w >> l, h = pg->h >> l;
+            sceGuTexImage(l, w, h, w, base + off);
+            off += ((uint32_t)w * h * bpp2 / 2 + 15) & ~15u;
+        }
+    } else {
+        sceGuTexImage(0, pg->w, pg->h, pg->w, base + pg->data);
+    }
     sceGuTexFlush();
     bound_page = p;
     return 1;
 }
 
-void vcpe_unbind(void) { bound_page = -2; }
+void vcpe_unbind(void) { bound_page = -2; }   /* after the game bound a texture itself (flush before doing that) */
 
 void vcpe_blend(int additive)
 {
     if (additive == bound_mode)
         return;
+    vcpe_gfx_flush();
     if (additive)
         sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, 0xFFFFFFFF);
     else
@@ -171,6 +307,7 @@ void vcpe_tex_white(int on)
 {
     if (on == bound_white)
         return;
+    vcpe_gfx_flush();
     sceGuTexFunc(on ? GU_TFX_ADD : GU_TFX_MODULATE, GU_TCC_RGBA);
     bound_white = on;
 }
@@ -179,6 +316,7 @@ void vcpe_filter(int nearest)
 {
     if (nearest == bound_filter)
         return;
+    vcpe_gfx_flush();
     sceGuTexFilter(nearest ? GU_NEAREST : GU_LINEAR, nearest ? GU_NEAREST : GU_LINEAR);
     bound_filter = nearest;
 }
@@ -192,22 +330,50 @@ void vcpe_quad(float x0, float y0, float x1, float y1, float u0, float v0, float
         return;
     vcpe_stat_quads++;
     vcpe_stat_area += (x1 - x0) * (y1 - y0);
-    VcpeVtx *v = sceGuGetMemory(2 * sizeof(VcpeVtx));
+    VcpeVtx *v;
+    if (batch_on) {
+        if (batch_kind != 1 || batch_n + 2 > BATCH_MAX) {
+            vcpe_gfx_flush();
+            batch_kind = 1;
+        }
+        v = batch_t + batch_n;
+        batch_n += 2;
+    } else {
+        v = sceGuGetMemory(2 * sizeof(VcpeVtx));
+    }
     v[0].u = u0; v[0].v = v0; v[0].color = color; v[0].x = x0; v[0].y = y0; v[0].z = 0;
     v[1].u = u1; v[1].v = v1; v[1].color = color; v[1].x = x1; v[1].y = y1; v[1].z = 0;
-    sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, v);
+    if (!batch_on) {
+        vcpe_stat_draws++;
+        sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, v);
+    }
 }
 
 void vcpe_fill(float x, float y, float w, float h, uint32_t color)
 {
     if ((color >> 24) == 0)
         return;
+    vcpe_stat_quads++;                 /* fills count as quads too in the perf lines */
+    vcpe_stat_area += w * h;
     vcpe_blend(0);
+    if (batch_on) {
+        if (batch_kind != 2 || batch_n + 2 > BATCH_MAX) {
+            vcpe_gfx_flush();
+            batch_kind = 2;
+        }
+        VcpeCVtx *v = batch_c + batch_n;
+        v[0].color = v[1].color = color;
+        v[0].x = x; v[0].y = y; v[0].z = 0;
+        v[1].x = x + w; v[1].y = y + h; v[1].z = 0;
+        batch_n += 2;
+        return;
+    }
     sceGuDisable(GU_TEXTURE_2D);
     VcpeCVtx *v = sceGuGetMemory(2 * sizeof(VcpeCVtx));
     v[0].color = v[1].color = color;
     v[0].x = x; v[0].y = y; v[0].z = 0;
     v[1].x = x + w; v[1].y = y + h; v[1].z = 0;
+    vcpe_stat_draws++;
     sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, v);
     sceGuEnable(GU_TEXTURE_2D);
 }
@@ -216,6 +382,7 @@ void vcpe_strip(const float *xy, const uint32_t *colors, int n, int additive)
 {
     if (n < 3)
         return;
+    vcpe_gfx_flush();
     vcpe_blend(additive);
     sceGuDisable(GU_TEXTURE_2D);
     VcpeCVtx *v = sceGuGetMemory(n * sizeof(VcpeCVtx));
@@ -231,6 +398,7 @@ void vcpe_strip(const float *xy, const uint32_t *colors, int n, int additive)
 
 void vcpe_clip(int x, int y, int w, int h)
 {
+    vcpe_gfx_flush();
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     if (w < 0) w = 0;
@@ -238,4 +406,4 @@ void vcpe_clip(int x, int y, int w, int h)
     sceGuScissor(x, y, x + w, y + h);
 }
 
-void vcpe_clip_reset(void) { sceGuScissor(0, 0, VCPE_SCR_W, VCPE_SCR_H); }
+void vcpe_clip_reset(void) { vcpe_gfx_flush(); sceGuScissor(0, 0, VCPE_SCR_W, VCPE_SCR_H); }
