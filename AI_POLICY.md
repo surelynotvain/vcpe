@@ -18,7 +18,7 @@ human- or AI-written; assume any part of the engine may have been.
 | Documentation | Headers, guides, the changelog |
 
 ## 3. What people do
-- **Direction.** The maintainer decides what VCPE is for, what gets built and in what order (see the roadmap).
+- **Direction.** The maintainer decides what VCPE is for, what gets built and when.
 - **Acceptance.** Nothing enters the engine without the maintainer accepting it. AI output is a proposal.
 - **Hardware.** Tests on real PSP consoles are done by people.
 - **Releases and authorship.** Commits, pull requests and releases are made by people. AI systems are not listed

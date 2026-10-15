@@ -5,7 +5,7 @@ engine changes the [license](LICENSE) asks you to send back.
 
 ## What helps most
 1. **Hardware results.** Run the self-test or your game on a real console and report the model (PSP-1000, 2000,
-   3000, Street, Go), the firmware, and what you saw. The roadmap's Track A depends on these.
+   3000, Street, Go), the firmware, and what you saw.
 2. **Bug reports** with the engine version, the PSP model or emulator version, and the shortest way to reproduce.
 3. **Fixes and optimizations**, with measurements (frame time, `vcpe_perf_line`, `vcpe_mem_report`).
 4. **Documentation** of modules and data formats.
