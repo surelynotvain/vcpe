@@ -9,19 +9,24 @@
 
 #define BUF_W 512
 #define FB_SIZE (BUF_W * VCPE_SCR_H * 4)
-#define MAX_BUNDLES 64
+#ifndef MAX_BUNDLES
+#define MAX_BUNDLES 64   /* games with more texture bundles pass -DMAX_BUNDLES=n (page tables hold up to 255) */
+#endif
 
 static unsigned int __attribute__((aligned(64))) dlist[512 * 1024 / 4];
 static const VcpePage *pages;
 static const VcpeBundle *bundles;
 static int nbundles;
 static uint8_t *bundle_mem[MAX_BUNDLES];
+static uint8_t bundle_attached[MAX_BUNDLES];   /* game memory: not ours to free */
+static int vsync = 1;
 static int bound_page = -2, bound_mode = -1, bound_white = -1, bound_filter = -1;
 static uint32_t draw_offset;   /* VRAM offset of the buffer being drawn this frame */
 
 uint32_t vcpe_gfx_draw_offset(void) { return draw_offset; }
 void vcpe_gfx_state_reset(void) { bound_page = -2; bound_mode = -1; bound_white = -1; bound_filter = -1; }
 int vcpe_stat_binds, vcpe_stat_quads;
+int vcpe_bind_epoch;   /* bumped whenever this module changes the bound texture / CLUT (other binders compare it) */
 float vcpe_stat_area;
 
 int vcpe_gfx_init(void)
@@ -73,6 +78,7 @@ void vcpe_gfx_begin(uint32_t clear)
     sceGuStart(GU_DIRECT, dlist);
     sceGuClearColor(clear);
     sceGuClear(GU_COLOR_BUFFER_BIT);
+    vcpe_bind_epoch++;
     bound_page = -2;
     bound_mode = -1;
     bound_white = -1;
@@ -84,9 +90,12 @@ void vcpe_gfx_end(void)
     sceGuFinish();
     sceGuSync(0, 0);
     vcpe_stat_frame_us = (int)(sceKernelGetSystemTimeWide() - frame_t0);
-    sceDisplayWaitVblankStart();
+    if (vsync)
+        sceDisplayWaitVblankStart();
     draw_offset = (uint32_t)(uintptr_t)sceGuSwapBuffers();   /* the next frame draws into the other one */
 }
+
+void vcpe_gfx_vsync(int on) { vsync = on; }
 
 /* ------------------------------------------------------------------ bundles */
 int vcpe_bundle_loaded(int b) { return b >= 0 && b < nbundles && bundle_mem[b] != 0; }
@@ -102,12 +111,23 @@ int vcpe_bundle_load(int b)
     return bundle_mem[b] ? 0 : -1;
 }
 
+void vcpe_bundle_attach(int b, uint8_t *mem)
+{
+    if (b < 0 || b >= nbundles)
+        return;
+    vcpe_bundle_unload(b);
+    bundle_mem[b] = mem;
+    bundle_attached[b] = mem != 0;
+}
+
 void vcpe_bundle_unload(int b)
 {
     if (b < 0 || b >= nbundles || !bundle_mem[b])
         return;
     sceGuSync(0, 0);
-    free(bundle_mem[b]);
+    if (!bundle_attached[b])
+        free(bundle_mem[b]);
+    bundle_attached[b] = 0;
     bundle_mem[b] = 0;
     bound_page = -2;
 }
@@ -135,6 +155,7 @@ int vcpe_bind_page(int p)
     if (p == bound_page)
         return 1;
     vcpe_stat_binds++;
+    vcpe_bind_epoch++;
     const VcpePage *pg = &pages[p];
     uint8_t *base = bundle_mem[pg->bundle];
     if (!base)
@@ -143,12 +164,29 @@ int vcpe_bind_page(int p)
         sceGuClutMode(GU_PSM_8888, 0, 0x0f, 0);
         sceGuClutLoad(2, base + pg->clut);
         sceGuTexMode(GU_PSM_T4, 0, 0, pg->swz);
-    } else {
+    } else if (pg->psm == 8) {
         sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
         sceGuClutLoad(32, base + pg->clut);
         sceGuTexMode(GU_PSM_T8, 0, 0, pg->swz);
+    } else if (pg->psm == 16 || pg->psm == 32) {
+        sceGuTexMode(pg->psm == 16 ? GU_PSM_4444 : GU_PSM_8888, 0, 0, pg->swz);
+    } else {
+        return 0;
     }
-    sceGuTexImage(0, pg->w, pg->h, pg->w, base + pg->data);
+    if (pg->nmips) {
+        /* mipmapped (3D): the levels follow the full-size image; the GE picks one by distance */
+        int bpp2 = pg->psm == 4 ? 1 : pg->psm == 8 ? 2 : pg->psm == 16 ? 4 : 8;
+        uint32_t off = pg->data;
+        int mode = pg->psm == 4 ? GU_PSM_T4 : pg->psm == 8 ? GU_PSM_T8 : pg->psm == 16 ? GU_PSM_4444 : GU_PSM_8888;
+        sceGuTexMode(mode, pg->nmips, 0, pg->swz);
+        for (int l = 0; l <= pg->nmips; l++) {
+            int w = pg->w >> l, h = pg->h >> l;
+            sceGuTexImage(l, w, h, w, base + off);
+            off += ((uint32_t)w * h * bpp2 / 2 + 15) & ~15u;
+        }
+    } else {
+        sceGuTexImage(0, pg->w, pg->h, pg->w, base + pg->data);
+    }
     sceGuTexFlush();
     bound_page = p;
     return 1;
@@ -202,6 +240,8 @@ void vcpe_fill(float x, float y, float w, float h, uint32_t color)
 {
     if ((color >> 24) == 0)
         return;
+    vcpe_stat_quads++;                 /* fills count as quads too in the perf lines */
+    vcpe_stat_area += w * h;
     vcpe_blend(0);
     sceGuDisable(GU_TEXTURE_2D);
     VcpeCVtx *v = sceGuGetMemory(2 * sizeof(VcpeCVtx));

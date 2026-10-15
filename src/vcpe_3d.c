@@ -37,6 +37,19 @@ int vcpe_3d_visible(const float c[3], float r)
     return 1;
 }
 
+int vcpe_3d_project(const float p[3], float *sx, float *sy)
+{
+    float d[3] = {p[0] - fr_pos[0], p[1] - fr_pos[1], p[2] - fr_pos[2]};
+    float z = d[0] * fr_fwd[0] + d[1] * fr_fwd[1] + d[2] * fr_fwd[2];
+    if (z < fr_near)
+        return 0;
+    float x = d[0] * fr_right[0] + d[1] * fr_right[1] + d[2] * fr_right[2];
+    float y = d[0] * fr_up[0] + d[1] * fr_up[1] + d[2] * fr_up[2];
+    *sx = VCPE_SCR_W * 0.5f * (1 + x / (z * fr_th));
+    *sy = VCPE_SCR_H * 0.5f * (1 - y / (z * fr_tv));
+    return 1;
+}
+
 void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, float znear, float zfar)
 {
     {
@@ -69,6 +82,8 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
     sceGuEnable(GU_ALPHA_TEST);                 /* cut-out textures */
     sceGuAlphaFunc(GU_GREATER, 0x20, 0xFF);
     vcpe_filter(1);
+    sceGuTexFilter(GU_NEAREST_MIPMAP_NEAREST, GU_NEAREST);   /* mipmapped pages: far surfaces read smaller levels */
+    sceGuTexLevelMode(GU_TEXTURE_AUTO, 0.0f);
     vcpe_blend(0);
     vcpe_tex_white(0);
     if (fog_end > fog_start) {
@@ -145,4 +160,12 @@ void vcpe_3d_end(void)
     sceGuEnable(GU_BLEND);
     sceGuTexWrap(GU_CLAMP, GU_CLAMP);
     vcpe_unbind();
+}
+
+void vcpe_3d_add(float k)
+{
+    unsigned a = (unsigned)((k < 0 ? 0 : k > 1 ? 1 : k) * 255.0f);
+    sceGuEnable(GU_BLEND);
+    sceGuBlendFunc(GU_ADD, GU_FIX, GU_FIX, a * 0x010101u, 0xFFFFFF);   /* dst + k x src */
+    sceGuDepthMask(GU_TRUE);
 }

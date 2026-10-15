@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "vcpe_sys.h"
+#include "vcpe_errimg.h"
 
 volatile int vcpe_running = 1;
 volatile int vcpe_resume_gen;
@@ -95,6 +96,25 @@ void vcpe_fatal(const char *title, const char *text)
     }
     pspDebugScreenSetTextColor(0xFFA0A0A0);
     pspDebugScreenPrintf("\n Press HOME to quit.\n");
+    /* the engine's error picture in the bottom-right corner (tools/mkerrimg.py), with a thin frame */
+    void *top = 0; int bw = 0, pf = 0;
+    sceDisplayWaitVblankStart();             /* the debug screen's buffer is shown from the next frame */
+    sceDisplayGetFrameBuf(&top, &bw, &pf, PSP_DISPLAY_SETBUF_NEXTFRAME);
+    if (top && bw > 0) {
+        const int x0 = 480 - 8 - VCPE_ERRIMG_W, y0 = 272 - 8 - VCPE_ERRIMG_H;
+        for (int y = -1; y <= VCPE_ERRIMG_H; y++)
+            for (int x = -1; x <= VCPE_ERRIMG_W; x++) {
+                int edge = x < 0 || y < 0 || x == VCPE_ERRIMG_W || y == VCPE_ERRIMG_H;
+                unsigned v = edge ? 0x7A08u : vcpe_errimg[y * VCPE_ERRIMG_W + x];   /* frame: dim red */
+                unsigned r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
+                int at = (y0 + y) * bw + x0 + x;
+                if (pf == PSP_DISPLAY_PIXEL_FORMAT_8888)
+                    ((volatile unsigned *)((unsigned)top | 0x40000000))[at] =
+                        0xFF000000u | (b << 3 | b >> 2) << 16 | (g << 2 | g >> 4) << 8 | (r << 3 | r >> 2);
+                else if (pf == PSP_DISPLAY_PIXEL_FORMAT_565)
+                    ((volatile unsigned short *)((unsigned)top | 0x40000000))[at] = (unsigned short)(b << 11 | g << 5 | r);
+            }
+    }
     while (vcpe_running)
         sceDisplayWaitVblankStart();
     sceKernelExitGame();

@@ -1,21 +1,43 @@
-MIT License
+VCPE Contribute-Back License, version 1.0
 
 Copyright (c) 2026 surelynotvain
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+"VCPE" means Vain's C Portable Engine: every file in this repository (engine source, runtime, tools, docs and
+assets), in any version from 3.0 on, and any work based on those files. "Your project" means a game, demake,
+program or other work that uses VCPE. "Engine changes" means any change to VCPE files, and any new file that
+is part of the engine rather than of your project (a new engine module, tool or fix), in source form.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Permission. You may use, copy, build, run and distribute VCPE, alone or as part of your project, free of
+   charge, under the conditions below.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. Contribute your engine changes back. If you distribute your project, or VCPE itself, with engine changes,
+   you must submit those engine changes as a pull request to https://github.com/surelynotvain/vcpe (or the
+   location the copyright holder names there). Submit them no later than the first public distribution that
+   contains them. You grant the copyright holder a perpetual, worldwide, royalty-free license to use, modify
+   and relicense what you submit. Whether a pull request is merged is up to the copyright holder; once it is
+   submitted, you have met this condition.
+
+3. Your own code stays yours. Your project's own code, art, data and other content are not engine changes.
+   This license does not require you to publish them or send them to anyone.
+
+4. Credit. Your project's credits, readme or about screen must state that it uses Vain's C Portable Engine
+   (VCPE) by surelynotvain.
+
+5. Notice. Copies of VCPE source must keep this license and the copyright notice above.
+
+6. Third-party material. Material in VCPE that comes from third parties remains under its owners' terms and
+   is not licensed by this license: the pictures in engineassets/ and the image data generated from them
+   (src/vcpe_errimg.h, src/vcpe_loadimg.h), and libraries VCPE uses from the pspdev toolchain (such as
+   stb_truetype). Replace those pictures with your own if their terms do not allow your use.
+
+7. Termination. If you break these conditions, your permission ends. It is restored if you fix the breach
+   within 30 days of being notified.
+
+8. No warranty. VCPE is provided "as is", without warranty of any kind, express or implied, including the
+   warranties of merchantability, fitness for a particular purpose and non-infringement. In no event shall the
+   authors or copyright holders be liable for any claim, damages or other liability, whether in an action of
+   contract, tort or otherwise, arising from, out of or in connection with VCPE or the use of or other dealings
+   in VCPE.
+
+VCPE 1.0 and 2.0 were released under the MIT license, and the copies of them already released keep that
+license. This license applies to VCPE 3.0 and every later version.

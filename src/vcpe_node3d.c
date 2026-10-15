@@ -143,6 +143,8 @@ static void update_world(void)
     }
 }
 
+void vcpe_node3d_refresh(void) { update_world(); }
+
 /* inverse of an affine row-major 4x4 */
 static void mat_inv_affine(const float *m, float *o)
 {

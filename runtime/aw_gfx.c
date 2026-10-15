@@ -1,4 +1,4 @@
-/* GU renderer: paletted (CLUT) swizzled texture pages streamed from AW.PAK. */
+/* GU renderer: paletted (CLUT) swizzled texture pages streamed from the data PAK. */
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspgu.h>
@@ -13,7 +13,7 @@
 
 
 
-/* language data (LANG.PAK or the built-in English copy in AW.PAK): fonts, text files, scene string translations */
+/* language data (LANG.PAK or the built-in English copy in the data PAK): fonts, text files, scene string translations */
 typedef struct {
     char magic[4];
     uint32_t version;

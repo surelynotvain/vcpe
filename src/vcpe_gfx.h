@@ -10,7 +10,10 @@
 
 /* the converters write these table layouts */
 typedef struct { uint32_t off, size; uint16_t first_page, npages; } VcpeBundle;
-typedef struct { uint16_t w, h; uint8_t psm, swz, bundle; uint32_t data, clut; } VcpePage;
+/* psm: 4/8 indexed, 16 RGBA4444, 32 RGBA8888. Direct-colour pages do not use clut.
+ * nmips: smaller levels after data (each half the size, 16-byte aligned). It sits in what was the padding byte, so
+ * the struct keeps its 16 bytes and older page tables (cast from their own 7-field structs) read nmips 0 */
+typedef struct { uint16_t w, h; uint8_t psm, swz, bundle, nmips; uint32_t data, clut; } VcpePage;
 typedef struct { float u, v; uint32_t color; float x, y, z; } VcpeVtx;
 typedef struct { uint32_t color; float x, y, z; } VcpeCVtx;
 
@@ -19,12 +22,16 @@ void vcpe_gfx_shutdown(void);
 void vcpe_gfx_tables(const VcpePage *pages, const VcpeBundle *bundles, int nbundles);
 void vcpe_gfx_begin(uint32_t clear);
 void vcpe_gfx_end(void);
+void vcpe_gfx_vsync(int on);   /* 0: vcpe_gfx_end swaps without waiting for the vblank (benchmarks; tears) */
 
 /* texture bundles: a group of pages loaded from the PAK together */
 int vcpe_bundle_load(int b);
 void vcpe_bundle_unload(int b);
 int vcpe_bundle_loaded(int b);
 uint8_t *vcpe_bundle_mem(int b);
+/* a bundle the game already holds in memory (data linked into the EBOOT): 64-byte aligned, written back from the
+ * data cache, never freed by the engine */
+void vcpe_bundle_attach(int b, uint8_t *mem);
 void vcpe_bundles_keep(const uint8_t *list, int n);   /* unload the others first, then load these */
 
 /* cached state */
@@ -32,6 +39,7 @@ int vcpe_bind_page(int page);   /* 0: its bundle is not loaded */
 void vcpe_page_size(int page, int *w, int *h);
 uint32_t vcpe_gfx_draw_offset(void);     /* VRAM offset of this frame's draw buffer (512-wide, 8888) */
 void vcpe_gfx_state_reset(void);         /* forget the cached GE state (after drawing with raw sceGu calls) */
+extern int vcpe_bind_epoch;     /* changes whenever vcpe_bind_page binds; modules binding their own textures compare it */
 void vcpe_unbind(void);         /* the game bound a texture itself (fonts, LANG pages) */
 void vcpe_blend(int additive);
 void vcpe_tex_white(int on);    /* colour = vertex colour, alpha = texture alpha (font materials) */

@@ -12,7 +12,7 @@ typedef struct {
     int (*command)(const char *cmd, const char *arg, int num, int num2, const char *line, unsigned *held);
     void (*pre)(void);                      /* every script frame first (e.g. a held stick) */
     int (*busy)(unsigned *held);            /* multi-frame actions (bot, goto): 1 = this frame is handled */
-    int every_command_takes_a_frame;        /* the Helltaker harness timing: each line ends the frame */
+    int every_command_takes_a_frame;        /* the original harness timing: each line ends the frame */
 } VcpeTestHooks;
 
 extern int vcpe_autotest;                   /* AUTOTEST.TXT was found */

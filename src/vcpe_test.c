@@ -54,13 +54,23 @@ void vcpe_test_step(unsigned *held)
         return;
     }
     while (*script_pos) {
-        char line[64];
+        /* Engine-specific assertions/scripts can exceed the original 63 bytes.
+         * Consume the whole line even when oversized: never execute fragments. */
+        char line[2048];
         int n = 0;
-        while (*script_pos && *script_pos != '\n' && n < 63)
-            line[n++] = *script_pos++;
+        int oversized = 0;
+        while (*script_pos && *script_pos != '\n') {
+            if (n < (int)sizeof(line) - 1) line[n++] = *script_pos;
+            else oversized = 1;
+            script_pos++;
+        }
         line[n] = 0;
         if (*script_pos == '\n')
             script_pos++;
+        if (oversized) {
+            fprintf(stderr, "VCPE autotest line exceeds %zu bytes\n", sizeof(line) - 1);
+            continue;
+        }
         char cmd[16] = {0}, arg[16] = {0};
         int num = 0, num2 = 0;
         int k = sscanf(line, "%15s %15s %d %d", cmd, arg, &num, &num2);
