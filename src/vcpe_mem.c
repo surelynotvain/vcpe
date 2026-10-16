@@ -29,24 +29,43 @@ int vcpe_mem_32mb(void)
 }
 
 /* Lock the volatile partition on the first call (TryLock: fails instead of waiting if someone else has it). */
+static int volatile_tried, volatile_paused;
+static void *volatile_ptr;
+static int volatile_size;
 uint8_t *vcpe_volatile_mem(uint32_t *size)
 {
-    static int tried;
-    static void *mem;
-    static int msize;
-    if (!tried) {
-        tried = 1;
+    if (!volatile_tried && !volatile_paused) {
+        volatile_tried = 1;
         int st = vcpe_step_begin("Locking volatile memory (4096 KB)");
-        if (sceKernelVolatileMemTryLock(0, &mem, &msize) < 0 || !mem || msize <= 0) {
-            mem = 0;
-            msize = 0;
+        if (sceKernelVolatileMemTryLock(0, &volatile_ptr, &volatile_size) < 0 || !volatile_ptr || volatile_size <= 0) {
+            volatile_ptr = 0;
+            volatile_size = 0;
         }
-        vcpe_step_end(st, mem != 0);
+        vcpe_step_end(st, volatile_ptr != 0);
     }
     if (size)
-        *size = (uint32_t)msize;
-    return (uint8_t *)mem;
+        *size = volatile_paused ? 0 : (uint32_t)volatile_size;
+    return volatile_paused ? 0 : (uint8_t *)volatile_ptr;
 }
+
+/* Firmware utilities need this partition too. Yield it before InitStart, reclaim after shutdown.
+ * As with sleep, contents are lost; the generation bump makes gfx reload volatile bundles. */
+int vcpe_volatile_suspend(void)
+{
+    if (volatile_paused) return -1;
+    if (!volatile_ptr) return 0;
+    if (sceKernelVolatileMemUnlock(0) < 0) return -1;
+    volatile_paused = 1;
+    return 1;
+}
+int vcpe_volatile_resume(void)
+{
+    if (!volatile_paused) return 0;
+    volatile_paused = 0; volatile_tried = 0;
+    vcpe_resume_gen++;
+    return vcpe_volatile_mem(0) ? 0 : -1;
+}
+int vcpe_volatile_suspended(void) { return volatile_paused; }
 
 /* mallinfo().uordblks = bytes currently allocated from the heap; the peak is tracked on every query. */
 static int peak;

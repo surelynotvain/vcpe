@@ -26,6 +26,7 @@
 #include "vcpe_sys.h"
 #include "vcpe_pak.h"
 #include "vcpe_gfx.h"
+int vcpe_volatile_suspended(void) __attribute__((weak));
 
 /* The frame buffer is 480x272 visible pixels, but the GE wants a power-of-two stride, so each row is 512 pixels wide
  * in memory. FB_SIZE is one 32-bit (8888) buffer in VRAM; the second buffer sits right after it. */
@@ -323,7 +324,7 @@ int vcpe_gfx_in_frame(void) { return in_frame; }
 void vcpe_gfx_begin(uint32_t clear)
 {
     vcpe_gfx_present();
-    if (reload_gen != vcpe_resume_gen)
+    if (reload_gen != vcpe_resume_gen && (!vcpe_volatile_suspended || !vcpe_volatile_suspended()))
         vcpe_bundles_reload();
     in_frame = 1;
     frame_t0 = sceKernelGetSystemTimeWide();
@@ -347,7 +348,7 @@ void vcpe_gfx_begin(uint32_t clear)
 
 /* Finish the frame. sceGuFinish closes the list; then either hand it to the GE and return (pipelining) or wait for
  * the GE (sceGuSync), wait for the vblank (no tearing) and swap the buffers. */
-void vcpe_gfx_end(void)
+void vcpe_gfx_end_overlay(void (*overlay)(void))
 {
     in_frame = 0;
     vcpe_gfx_flush();
@@ -357,13 +358,17 @@ void vcpe_gfx_end(void)
     vcpe_stat_dlist_kb = (sceGuCheckList() + 1023) / 1024;
     if (vcpe_stat_dlist_kb > vcpe_stat_dlist_peak_kb)
         vcpe_stat_dlist_peak_kb = vcpe_stat_dlist_kb;
-    if (pipeline && !bench_frames) {
+    if (pipeline && !bench_frames && !overlay) {
         /* the GE draws this frame while the game updates the next one; vcpe_gfx_begin shows it */
         pending = 1;
         return;
     }
     sceGuSync(0, 0);
     ge_done(t);
+    if (overlay) {
+        overlay();
+        sceGuSync(0, 0);
+    }
     /* Here nothing overlapped the GE's work, so the wait is the GE's real cost. */
     vcpe_stat_ge_us = vcpe_stat_gpu_wait_us;   /* drawn with nothing overlapping: the GE's own time */
     if (bench_frames)
@@ -373,6 +378,8 @@ void vcpe_gfx_end(void)
     draw_offset = (uint32_t)(uintptr_t)sceGuSwapBuffers();   /* the next frame draws into the other one */
     shown();
 }
+
+void vcpe_gfx_end(void) { vcpe_gfx_end_overlay(0); }
 
 void vcpe_gfx_vsync(int on) { vsync = on; }
 
@@ -480,6 +487,8 @@ int vcpe_resume_pending(void)
  * overwritten; shows the loading screen if the read takes long. */
 int vcpe_bundles_reload(void)
 {
+    if (vcpe_volatile_suspended && vcpe_volatile_suspended())
+        return -1; /* firmware owns the partition until its utility has shut down */
     if (!vcpe_resume_pending())
         return 0;
     if (in_frame) {   /* never inside a frame: the GE may be reading the memory */

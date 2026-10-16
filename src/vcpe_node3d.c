@@ -64,6 +64,7 @@ uint32_t vcpe_hash(const char *s)
 /* Start a scene: copy every node's initial state, mark every matrix as needing a build, start autoplay animations. */
 void vcpe_node3d_load(const VcpeScene3D *s)
 {
+    vcpe_3d_cull_reset(); /* geometry lifetime boundary; rebuild raw batch registrations after scene load */
     S = s;
     free(nodes);
     free(players);
@@ -90,6 +91,15 @@ void vcpe_node3d_load(const VcpeScene3D *s)
         }
     }
     vcpe_anim_fov = 0;
+    /* Derive batch bounds automatically from referenced geometry, behind the scene's loading screen. */
+    for(int i=0;i<s->nnodes;i++)if(s->nodes[i].mesh>=0) {
+        const VcpeMeshDef *mesh=&s->meshes[s->nodes[i].mesh];
+        for(int b=mesh->first;b<mesh->first+mesh->n;b++) {
+            const VcpeBatch *bt=&s->batches[b];
+            vcpe_3d_prepare(s->geo+(bt->voff-s->geo_off),bt->nverts,
+                (const uint16_t *)(s->geo+(bt->ioff-s->geo_off)),bt->nidx);
+        }
+    }
 }
 
 int vcpe_node3d_find(uint32_t h)
@@ -286,8 +296,10 @@ void vcpe_node3d_draw(uint32_t cull)
             float s0 = w[0] * w[0] + w[4] * w[4] + w[8] * w[8], s1 = w[1] * w[1] + w[5] * w[5] + w[9] * w[9];
             float s2 = w[2] * w[2] + w[6] * w[6] + w[10] * w[10], sm = s0 > s1 ? s0 : s1;
             if (s2 > sm) sm = s2;
-            if (!vcpe_3d_visible(c, b[3] * sqrtf(sm)))
+            if (!vcpe_3d_visible_local(b, b[3], w)) {
+                vcpe_stat_cull_nodes++;
                 continue;
+            }
             if (use_lod && S->lods[m].levels) {
                 lvl = lod_pick(&view, &S->lods[m], c, b[3] * sqrtf(sm), sqrtf(sm), nodes[i].lod);
                 nodes[i].lod = (int8_t)lvl;
@@ -310,7 +322,10 @@ void vcpe_node3d_draw(uint32_t cull)
                 }
                 vcpe_lod_stat_drawn += (int)nidx / 3;
             }
-            vcpe_3d_draw(bt->page, S->geo + (bt->voff - S->geo_off), (const uint16_t *)(S->geo + (ioff - S->geo_off)), nidx);
+            const void *verts=S->geo+(bt->voff-S->geo_off);
+            const uint16_t *indices=(const uint16_t *)(S->geo+(ioff-S->geo_off));
+            vcpe_3d_prepare(verts,bt->nverts,indices,nidx); /* also handles mesh swaps and LOD lists */
+            vcpe_3d_draw(bt->page, verts, indices, nidx);
         }
         if (nodes[i].transparency)
             vcpe_3d_alpha(1);

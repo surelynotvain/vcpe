@@ -1,17 +1,19 @@
-# VCPE 4.7: Vain's C Portable Engine
+# VCPE 5.0: Vain's C Portable Engine
 
 A game engine in plain C for the **Sony PlayStation Portable**, built for demakes: PC games rewritten to run on the
 PSP's 333 MHz CPU, its GE graphics chip and its 32 or 64 MB of memory.
 
 VCPE has no splash screen and no scripting requirement. A game links only the modules it uses.
 
-**Current release: [VCPE 4.7](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.7).**
-This release adds automatic cosmetic and memory budgets, deterministic runtime optimizations, predictive loading,
-diagnostics, reservation workers, compact asset packs and mesh LOD. Existing games adopt a new engine version
-explicitly; adaptive quality, batching and pipelining remain opt-in.
+**Current release: [VCPE 5.0](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-5.0).**
+5.0 adds reversible engine upgrades, native PSP savedata, geometry-derived camera culling, and the standard
+Hetalia Czechia loading animation with a bottom-right “made with VCPE 5.0” credit and an eight-line status log.
+It includes the memory, runtime, predictive-loading and diagnostics improvements from 4.7. Existing games adopt
+an engine version explicitly; adaptive quality, batching and pipelining remain opt-in.
 
-The [upgrade guide](docs/upgrading-to-4.7.md) explains integration and measured checks. The
-[Blank Engine](docs/blank-engine.md) builds a standalone engine demo with no game files.
+The [5.0 upgrade guide](docs/upgrading-to-5.0.md) explains integration and rollback. Read the
+[native savedata guide](docs/savedata.md) and [camera-culling guide](docs/camera-culling.md) for their ownership and
+invalidation rules. The [Blank Engine](docs/blank-engine.md) builds a standalone demo with no game files.
 
 ## Versions
 
@@ -28,11 +30,12 @@ The [upgrade guide](docs/upgrading-to-4.7.md) explains integration and measured 
 | **4.0** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.0) | Text binds its texture once instead of once per string, O(1) sprite cache, pooled coroutine threads, sleep/resume reload behind the loading screen, display-list overflow guard, arenas, vblank and GE timing, one standard perf and memory line |
 | **4.1** | in 4.7 | Event bus, blackboard and live tuning; priority reservation workers; compact asset packs; mesh LOD and offline tools; standalone Blank Engine |
 | **4.5** | in 4.7 | Variable-size checked saves and optional multichannel ADPCM streams with intro/loop points, pitch, fades and resumable positions |
-| **4.7** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.7), `main` | Memory budgets and automatic cosmetic scaling; cached transforms and draw ordering; deterministic collision broadphase; demand-grown effects/components and stable stores; lazy font atlas; predictive loading; frame and allocation diagnostics |
+| **4.7** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.7) | Memory budgets and automatic cosmetic scaling; cached transforms and draw ordering; deterministic collision broadphase; demand-grown effects/components and stable stores; lazy font atlas; predictive loading; frame and allocation diagnostics |
+| **5.0** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-5.0), `main` | Reversible per-project engine upgrades; native savedata and XMB metadata; automatic batch/chunk camera culling with mutable bounds; Czechia loading animation, version credit and eight-row status log |
 
 3.1, 3.2 and 3.4 have no snapshot of their own: they were finished on the way to the next version, and their source
 is part of 3.3 and 3.5. The 4.1 and 4.5 development iterations are included in 4.7 without separate release tags.
-[CHANGELOG.md](CHANGELOG.md) describes the releases, and [docs/upgrading-to-4.7.md](docs/upgrading-to-4.7.md)
+[CHANGELOG.md](CHANGELOG.md) describes the releases, and [docs/upgrading-to-5.0.md](docs/upgrading-to-5.0.md)
 says what a game can adopt.
 
 There is no published roadmap. Features are added when the engine needs them, and are listed here once they are
@@ -46,8 +49,19 @@ Build the standalone engine with Podman and the [pspdev](https://github.com/pspd
 sh blank/build.sh
 ```
 
-Copy `blank/EBOOT.PBP` to `PSP/GAME/VCPEBLANK/`. Left/right changes pages: SYSTEM, JOBS, ULTRA, PERF, ADAPT
-and BENCH. HOME exits. The demo enables adaptation so its behavior can be inspected; games opt in separately.
+Copy `blank/EBOOT.PBP` to `PSP/GAME/VCPE50/`. Left/right changes pages: SYSTEM, JOBS, ULTRA, PERF, ADAPT,
+BENCH and SAVES. On SAVES, Cross saves, Circle loads and Triangle previews the loader. HOME exits.
+The demo enables adaptation so its behavior can be inspected; games opt in separately.
+
+Upgrade an older project with a manifest-checked engine snapshot:
+
+```sh
+python3 tools/vcpe_upgrade.py plan /path/to/demake
+python3 tools/vcpe_upgrade.py apply /path/to/demake
+```
+
+Add `--savedata` to resolve the optional native savedata modules and utility library. Games must integrate
+the save calls and deliberately import old saves; upgrading does not rewrite gameplay or save schemas.
 
 Run the host suites with a C compiler, Python 3, Pillow, NumPy, Fontconfig and a system TrueType font:
 
@@ -75,6 +89,11 @@ PSP_EMU=/path/to/PPSSPPHeadless sh tests/selftest/run.sh
 - **4.7 verification.** Host suites and standalone PPSSPP checks pass. The controlled collision fixture reduces
   candidates from 3,941,120 to 614,650 with identical state/contact hashes. These numbers describe that fixture,
   not a guaranteed speedup in every game. See the [release checks](docs/upgrading-to-4.7.md#verification).
+- **5.0 verification.** Upgrade/rollback, volatile-memory handoff and culling CPU contracts pass. Culling checks
+  include 20,000 camera/affine cases, mocked GU submission, dynamic bounds and allocation failures, including
+  Clang ASan/UBSan and fast-math builds. Earlier standalone 5.0 checks cover savedata round trips/imports,
+  metadata/icons and animated loader captures. New culling has build/CPU evidence; complete-game visual and
+  frame-time acceptance remain pending. See [5.0 release verification](docs/release-5.0.md).
 - **Hardware.** This release has no new physical PSP verification. Emulator results do not establish GE texture-cache,
   real memory-stick, sleep/resume or audio-timing behavior. Test those on each supported console before release.
 
@@ -86,7 +105,7 @@ PSP_EMU=/path/to/PPSSPPHeadless sh tests/selftest/run.sh
 | [`runtime/`](runtime/) | The 2D runtime from 2.0 |
 | [`tools/`](tools/) | Converters: texture pages, ADPCM sound, PAK writer, fonts, Godot 4 scene helpers, XMB icon/background/sound makers |
 | [`blank/`](blank/) | Standalone engine UI, diagnostics and demonstrations |
-| [`docs/`](docs/) | Upgrading, automatic budgets, memory, jobs/packs, LOD, the PSP-1000, input and converters |
+| [`docs/`](docs/) | Upgrading/rollback, native savedata, camera culling, automatic budgets, memory, jobs/packs, LOD, PSP-1000, input and converters |
 | [`engineassets/`](engineassets/) | Error/loading/Blank Engine pictures (third-party, see the license); generated image data retains those owners' terms |
 | [`tests/`](tests/) | Host suites and a portable standalone PSP self-test |
 | [`LICENSE`](LICENSE), [`AI_POLICY.md`](AI_POLICY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CHANGELOG.md`](CHANGELOG.md) | Terms, how AI is used, how to contribute, what changed |

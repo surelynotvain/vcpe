@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 #include "vcpe_jobs.h"
 #include "vcpe_pack.h"
 #include "vcpe_ultra.h"
@@ -14,7 +15,7 @@ static int fails;
 #define CHECK(c, ...) do { if (c) printf("PASS " __VA_ARGS__); else { fails++; printf("FAIL " __VA_ARGS__); } printf("\n"); } while (0)
 
 /* vcpe_pak stand-in: reads the test PAK built by the script */
-static const char *pak = "/tmp/vcpe_jobs_pack_test.pak";
+static const char *pak;
 const char *vcpe_pak_path(void) { return pak; }
 int vcpe_pak_read(uint32_t off, void *dst, uint32_t size)
 {
@@ -29,7 +30,20 @@ static int norder;
 static pthread_t main_thread;
 static int done_on_main = 1, done_count;
 static void job(void *arg) { order[norder++] = *(char *)arg; usleep(2000); }
-static void slow(void *arg) { (void)arg; usleep(20000); }
+/* Hold the two first worker jobs until the main thread observes them. Scheduling speed must not decide
+ * whether the priority assertion sees RUNNING or already-DONE jobs. */
+static pthread_mutex_t slow_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t slow_cond = PTHREAD_COND_INITIALIZER;
+static int slow_entered, slow_release;
+static void slow(void *arg)
+{
+    (void)arg;
+    pthread_mutex_lock(&slow_lock);
+    slow_entered++;
+    pthread_cond_broadcast(&slow_cond);
+    while (!slow_release) pthread_cond_wait(&slow_cond, &slow_lock);
+    pthread_mutex_unlock(&slow_lock);
+}
 static void done(int id, void *arg) { (void)id; (void)arg; done_count++; if (!pthread_equal(pthread_self(), main_thread)) done_on_main = 0; }
 
 static int ready_ok = -1;
@@ -38,8 +52,9 @@ static void ready(int h, int ok, void *u) { (void)h; (void)u; ready_ok = ok; }
 int main(int argc, char **argv)
 {
     unsigned off[3], size[3];
-    if (argc < 7) { printf("usage: offsets and sizes of 3 packs\n"); return 2; }
-    for (int i = 0; i < 3; i++) { off[i] = strtoul(argv[1 + i * 2], 0, 0); size[i] = strtoul(argv[2 + i * 2], 0, 0); }
+    if (argc < 8) { printf("usage: PAK path, offsets and sizes of 3 packs\n"); return 2; }
+    pak = argv[1];
+    for (int i = 0; i < 3; i++) { off[i] = strtoul(argv[2 + i * 2], 0, 0); size[i] = strtoul(argv[3 + i * 2], 0, 0); }
     main_thread = pthread_self();
 
     /* -------- jobs: 3 reservations, 2 clients; with no servers the main thread serves them best first */
@@ -73,19 +88,28 @@ int main(int argc, char **argv)
     CHECK(vcpe_reserve_cancel(c) == 1 && vcpe_reserve_state(c) == 0 && vcpe_jobs_pending() == 0, "cancel a pending reservation");
 
     /* -------- servers: 3 reservations for 2 clients handed out by 2 servers */
-    CHECK(vcpe_servers_start(2, 0) == 2, "2 servers started");
     done_count = 0;
+    /* Submit the complete pending batch before workers can pick. A running lower-priority job is not preempted. */
     int r1 = vcpe_reserve(loader, slow, 0, done, 0);
     int r2 = vcpe_reserve(ai, slow, 0, done, 0);
     int r3 = vcpe_reserve(ai, slow, 0, done, 10);
-    usleep(5000);
+    CHECK(vcpe_servers_start(2, 0) == 2, "2 servers started");
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline); deadline.tv_sec += 2;
+    pthread_mutex_lock(&slow_lock);
+    int wait_result = 0;
+    while (slow_entered < 2 && !wait_result)
+        wait_result = pthread_cond_timedwait(&slow_cond, &slow_lock, &deadline);
     int running = (vcpe_reserve_state(r1) == VCPE_RES_RUNNING) + (vcpe_reserve_state(r2) == VCPE_RES_RUNNING) +
                   (vcpe_reserve_state(r3) == VCPE_RES_RUNNING);
     int loader_waits = vcpe_reserve_state(r1) == VCPE_RES_PENDING;
+    slow_release = 1;
+    pthread_cond_broadcast(&slow_cond);
+    pthread_mutex_unlock(&slow_lock);
     vcpe_jobs_wait_all();
     int s1 = vcpe_reserve_server(r1), s2 = vcpe_reserve_server(r2), s3 = vcpe_reserve_server(r3);
     vcpe_jobs_update();
-    CHECK(running == 2 && loader_waits, "both servers took the two AI reservations first, the loader waited");
+    CHECK(!wait_result && running == 2 && loader_waits, "both servers took the two AI reservations first, the loader waited");
     CHECK(done_count == 3 && done_on_main && s1 >= 0 && s2 >= 0 && s3 >= 0 && s2 != s3, "all 3 served (servers %d %d %d), done callbacks on the main thread", s1, s2, s3);
     char line[160];
     vcpe_jobs_line(line, sizeof line);

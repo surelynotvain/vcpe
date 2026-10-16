@@ -21,7 +21,8 @@
 #include "vcpe_pak.h"
 #include "vcpe_hud.h"
 #include "vcpe_load.h"
-#include "vcpe_loadimg.h"   /* tools/mkloadimg.py: engineassets/wow.gif */
+#include "vcpe_version.h"
+#include "vcpe_loadimg.h"   /* tools/mkloadimg.py: engineassets/hetalia-czechia.gif */
 
 static int show_after_us = 150000;
 /* Each redraw waits for a vblank (up to 16.7 ms), so redrawing less often lets the load finish sooner. */
@@ -38,15 +39,18 @@ static void (*hook)(float progress, int ms);
 static const char *word = "LOADING";
 
 /* the boot log: the last steps reported (vcpe_step_*), newest at the bottom */
-/* The boot log: the last 15 steps, newest at the bottom; older lines scroll off the top. */
-#define LOG_LINES 15
+/* Retain history independently of the visible height. */
+#define LOG_LINES 24
 #define LOG_CHARS 58
 typedef struct { int id, status; char text[LOG_CHARS + 1]; } LogLine;
 static LogLine log_lines[LOG_LINES];
 static int log_n;   /* lines used */
 static int show_log = 1;
+static int visible_lines = 8;
 
 void vcpe_loading_show_log(int on) { show_log = on; }
+void vcpe_loading_log_lines(int lines) { visible_lines = lines < 1 ? 1 : lines > LOG_LINES ? LOG_LINES : lines; }
+int vcpe_loading_log_height(void) { return visible_lines; }
 
 /* In autotest runs, finished steps also go to stdout with their result, for test logs. */
 static void log_print(const LogLine *l)
@@ -87,8 +91,16 @@ static void step_hook(int id, int status, const char *text)
 void vcpe_loading_draw_log(int ms)
 {
     (void)ms;
-    for (int i = 0; i < log_n; i++)
-        vcpe_hud_text(8, 8 + i * 9, log_lines[i].text, 0xFFC0C0C0, 1);
+    static const char *tag[] = {"[ .... ]", "[  OK  ]", "[FAILED]", "[ INFO ]"};
+    static const uint32_t color[] = {0xFFC0C0C0, 0xFF80D080, 0xFF8080FF, 0xFFC0C0C0};
+    int first = log_n > visible_lines ? log_n - visible_lines : 0;
+    for (int i = first; i < log_n; i++) {
+        char line[59];
+        int status = log_lines[i].status;
+        if (status < 0 || status > 3) status = VCPE_STEP_INFO;
+        snprintf(line, sizeof line, "%s %.49s", tag[status], log_lines[i].text);
+        vcpe_hud_text(8, 8 + (i - first) * 9, line, color[status], 1);
+    }
 }
 
 void vcpe_loading_draw_hook(void (*draw)(float progress, int ms)) { hook = draw; }
@@ -98,9 +110,9 @@ void vcpe_loading_show_after(int ms) { show_after_us = ms * 1000; }
 void vcpe_loading_redraw_ms(int ms) { redraw_us = (ms < 16 ? 16 : ms) * 1000; }
 int vcpe_loading_shown(void) { return shown; }
 
-/* the engine's loading animation, size x size at (x, y), at ms into the loop */
-/* The animation: 24 frames of 8-bit indexed pixels sharing one palette (src/vcpe_loadimg.h, built from
- * engineassets/wow.gif by tools/mkloadimg.py). Find the frame for this moment from the per-frame durations, then
+/* The animation: 31 frames of 8-bit indexed pixels sharing one palette (src/vcpe_loadimg.h, built from
+ * engineassets/hetalia-czechia.gif by tools/mkloadimg.py). Size is the drawn width; height keeps its aspect ratio.
+ * Find the frame for this moment from the per-frame durations, then
  * point the GE at that frame's texels; the palette load is skipped while the same frame is still bound. */
 void vcpe_loading_anim(float x, float y, float size, int ms)
 {
@@ -108,10 +120,10 @@ void vcpe_loading_anim(float x, float y, float size, int ms)
     if (!loop_ms)
         for (int i = 0; i < VCPE_LOADIMG_FRAMES; i++)
             loop_ms += vcpe_loadimg_ms[i];
-    int t = ms % loop_ms, f = 0;
+    int t = (ms < 0 ? 0 : ms) % loop_ms, f = 0;
     while (f < VCPE_LOADIMG_FRAMES - 1 && t >= vcpe_loadimg_ms[f])
         t -= vcpe_loadimg_ms[f++];
-    const uint8_t *img = vcpe_loadimg + f * VCPE_LOADIMG_SIZE * VCPE_LOADIMG_SIZE;
+    const uint8_t *img = vcpe_loadimg + f * VCPE_LOADIMG_FRAME_BYTES;
     vcpe_blend(0);
     vcpe_tex_white(0);
     vcpe_filter(1);
@@ -120,10 +132,11 @@ void vcpe_loading_anim(float x, float y, float size, int ms)
         sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
         sceGuClutLoad(32, vcpe_loadimg_clut);
         sceGuTexMode(GU_PSM_T8, 0, 0, 0);
-        sceGuTexImage(0, 128, 128, VCPE_LOADIMG_SIZE, img);
+        sceGuTexImage(0, VCPE_LOADIMG_TEX_W, VCPE_LOADIMG_TEX_H, VCPE_LOADIMG_TEX_W, img);
         vcpe_tex_flush();
     }
-    vcpe_quad(x, y, x + size, y + size, 0, 0, VCPE_LOADIMG_SIZE, VCPE_LOADIMG_SIZE, 0xFFFFFFFF);
+    vcpe_quad(x, y, x + size, y + size * VCPE_LOADIMG_HEIGHT / VCPE_LOADIMG_WIDTH,
+              0, 0, VCPE_LOADIMG_WIDTH, VCPE_LOADIMG_HEIGHT, 0xFFFFFFFF);
     vcpe_gfx_flush();
 }
 
@@ -132,11 +145,15 @@ void vcpe_loading_anim(float x, float y, float size, int ms)
 /* The standard screen: log top-left, animation bottom-right, the word with 0-3 animated dots and the bar above it. */
 void vcpe_loading_draw_standard(float p, int ms)
 {
-    const float m = 12, sz = VCPE_LOADIMG_SIZE;
-    float ax = VCPE_SCR_W - m - sz, ay = VCPE_SCR_H - m - sz;
+    const float m = 12, sz = VCPE_LOADIMG_WIDTH;
+    const char *credit = "made with VCPE " VCPE_VERSION;
+    float ax = VCPE_SCR_W - m - sz;
+    float ay = VCPE_SCR_H - m - 12 - VCPE_LOADIMG_HEIGHT;
     if (show_log)
         vcpe_loading_draw_log(ms);
     vcpe_loading_anim(ax, ay, sz, ms);
+    vcpe_hud_text(VCPE_SCR_W - m - vcpe_hud_text_width(credit, 1), VCPE_SCR_H - m - 8,
+                   credit, 0xFFC0C0C0, 1);
     char s[40];
     int dots = (ms / 300) % 4;
     snprintf(s, sizeof s, "%s%.*s", word, dots, "...");

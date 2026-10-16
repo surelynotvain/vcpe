@@ -28,8 +28,8 @@ PSP_MODULE_INFO("VCPE Blank Engine", PSP_MODULE_USER, VCPE_VERSION_MAJOR, VCPE_V
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 PSP_HEAP_SIZE_KB(-1024);
 
-enum { PAGE_SYSTEM, PAGE_JOBS, PAGE_ULTRA, PAGE_PERF, PAGE_ADAPT, PAGE_BENCH, NPAGES };
-static const char *page_names[NPAGES] = {"SYSTEM", "JOBS", "ULTRA", "PERF", "ADAPT", "BENCH"};
+enum { PAGE_SYSTEM, PAGE_JOBS, PAGE_ULTRA, PAGE_PERF, PAGE_ADAPT, PAGE_BENCH, PAGE_SAVES, NPAGES };
+static const char *page_names[NPAGES] = {"SYSTEM", "JOBS", "ULTRA", "PERF", "ADAPT", "BENCH", "SAVES"};
 static int page, frames;
 
 #define WHITE 0xFFFFFFFF
@@ -251,21 +251,98 @@ static void page_bench(void)
     static VcpeDiagStats stats;
     if (frames%30==0 || !stats.samples) vcpe_diag_stats(&stats);
     panel(8,34,464,206);
-    vcpe_hud_text(14,42,"VCPE 4.7 ENGINE DIAGNOSTICS",ACCENT,1);
-    vcpe_hud_printf(14,62,WHITE,"Frame avg / p95  %u / %u us",stats.average_us,stats.p95_us);
-    vcpe_hud_printf(14,74,WHITE,"Frame p99 / max  %u / %u us",stats.p99_us,stats.worst_us);
-    vcpe_hud_printf(14,86,WHITE,"CPU / GPU wait   %u / %u us",stats.last_cost[0],stats.last_cost[1]);
-    vcpe_hud_printf(14,98,WHITE,"Asset reads      %u us",stats.last_cost[2]);
-    vcpe_hud_printf(14,110,WHITE,"Allocation fails %u",stats.failures);
-    vcpe_hud_printf(14,134,WHITE,"Grid candidates  %u / %u",bench_candidates,bench_full);
-    vcpe_hud_printf(14,146,WHITE,"Stable pool trim %u bytes",bench_freed);
-    vcpe_hud_printf(14,158,WHITE,"Benchmark time   %u us",bench_us);
+    vcpe_hud_text(14,42,"VCPE " VCPE_VERSION " ENGINE DIAGNOSTICS",ACCENT,1);
+    vcpe_hud_printf(14,62,WHITE,"Frame avg / p95  %u / %u us",(unsigned)stats.average_us,(unsigned)stats.p95_us);
+    vcpe_hud_printf(14,74,WHITE,"Frame p99 / max  %u / %u us",(unsigned)stats.p99_us,(unsigned)stats.worst_us);
+    vcpe_hud_printf(14,86,WHITE,"CPU / GPU wait   %u / %u us",(unsigned)stats.last_cost[0],(unsigned)stats.last_cost[1]);
+    vcpe_hud_printf(14,98,WHITE,"Asset reads      %u us",(unsigned)stats.last_cost[2]);
+    vcpe_hud_printf(14,110,WHITE,"Allocation fails %u",(unsigned)stats.failures);
+    vcpe_hud_printf(14,134,WHITE,"Grid candidates  %u / %u",(unsigned)bench_candidates,(unsigned)bench_full);
+    vcpe_hud_printf(14,146,WHITE,"Stable pool trim %u bytes",(unsigned)bench_freed);
+    vcpe_hud_printf(14,158,WHITE,"Benchmark time   %u us",(unsigned)bench_us);
     vcpe_hud_text(14,182,bench_full?(bench_ok?"ENGINE MICROBENCH PASSED":"ENGINE MICROBENCH FAILED"):"X: run engine microbench",ACCENT,1);
     vcpe_hud_text(14,206,"Includes CPU, GPU-wait and I/O counters.",GREY,1);
     vcpe_hud_text(14,218,"Microbench timing is specific to this device.",GREY,1);
 }
+/* Native save demo uses a dedicated DISC_ID, independent of any demake. */
+static VcpeSavedata save_demo = {"UCJS19050", "DEMO00", "VCPE 5.0 Save Demo", "Engine test slot",
+    "Made with VCPE 5.0. Native savedata utility demonstration.", 0, 1};
+static uint32_t save_counter;
+static int save_result;
+static void save_write(void) { save_counter++; save_result = vcpe_savedata_write(&save_demo, &save_counter, sizeof save_counter, 1); }
+static void save_read(void) { uint32_t n; save_result = vcpe_savedata_read(&save_demo, &save_counter, sizeof save_counter, &n, 1); }
+static void save_check(void)
+{
+    VcpeSavedata s = save_demo; s.dialog = 0;
+    uint8_t a[513], b[513]; uint32_t n = 99; int ok = 1;
+    for (unsigned i=0; i<sizeof a; i++) a[i] = (uint8_t)(i * 37);
+    /* A registered volatile bundle must reload after the firmware borrows the partition. */
+    char pakpath[512]; vcpe_path(pakpath, sizeof pakpath, "SAVETEST.PAK");
+    FILE *pak = fopen(pakpath, "wb");
+    int pak_ok = pak && fwrite(a, 1, 64, pak) == 64;
+    if (pak) pak_ok &= fclose(pak) == 0;
+    uint32_t volatile_size = 0;
+    uint8_t *vol = vcpe_volatile_mem(&volatile_size);
+    static const VcpeBundle bundle = {0, 64, 0, 1};
+    static const VcpePage texture = {8,8,GU_PSM_T8,0,0,0,0,0};
+    vcpe_gfx_tables(&texture, &bundle, 1);
+    int registered = pak_ok && vol && volatile_size >= 64 && vcpe_pak_open(pakpath) >= 0 &&
+        vcpe_bundle_load_at(0, vol, volatile_size, 1) == 0;
+    ok &= registered;
+    int r = vcpe_savedata_write(&s, a, sizeof a, 7); ok &= r == 0;
+    memset(b, 0, sizeof b);
+    r = vcpe_savedata_read(&s, b, sizeof b, &n, 7); ok &= r == 0 && n == sizeof a && !memcmp(a,b,sizeof a);
+    memset(b, 0xA5, sizeof b); n = 99;
+    r = vcpe_savedata_read(&s, b, sizeof b, &n, 8); ok &= r == VCPE_SAVEDATA_CORRUPT && n == 99 && b[0] == 0xA5;
+    r = vcpe_savedata_read(&s, b, 4, &n, 7); ok &= r != 0 && n == 99 && b[0] == 0xA5;
+    s.slot = "../BAD"; ok &= vcpe_savedata_write(&s, a, sizeof a, 7) == VCPE_SAVEDATA_INVALID;
+    s.slot = "IMPORT";
+    ok &= vcpe_save_write("MIGRATE.DAT", a, sizeof a, 7) == 0;
+    ok &= vcpe_savedata_import(&s, "MIGRATE.DAT", sizeof a, 7) == 0;
+    ok &= vcpe_savedata_read(&s, b, sizeof b, &n, 7) == 0 && !memcmp(a,b,sizeof a);
+    ok &= vcpe_save_read("MIGRATE.DAT", b, sizeof b, 7) == 0 && !memcmp(a,b,sizeof a);
+    if (registered) {
+        memset(vol,0,64); /* prove the next frame re-reads, independent of what this firmware overwrote */
+        vcpe_gfx_begin(0xFF000000); vcpe_gfx_end(); vcpe_gfx_present();
+        ok &= !memcmp(vol,a,64) && !vcpe_resume_pending();
+        vcpe_bundle_unload(0);
+    }
+    vcpe_gfx_tables(0,0,0); vcpe_pak_close();
+    save_result = ok ? 0 : -1;
+    printf("%s native savedata: roundtrip, version/capacity rejection, import, originals and volatile bundle reload\n",ok?"PASS":"FAIL");
+    page = PAGE_SAVES;
+}
+static void loading_preview(void)
+{
+    vcpe_loading_show_after(0); vcpe_loading_redraw_ms(16); vcpe_loading_begin(120);
+    for (int i=0; i<12; i++) {
+        int st = vcpe_step_begin("Preparing engine resource %02d", i + 1);
+        sceKernelDelayThread(25000); vcpe_step_end(st, 1); vcpe_loading_add(10);
+    }
+    vcpe_test_snap("loading0");
+    for (int i=0; i<20; i++) { sceKernelDelayThread(25000); vcpe_loading_tick(); }
+    vcpe_test_snap("loading1");
+    vcpe_loading_end(); vcpe_loading_show_after(150); vcpe_loading_redraw_ms(50);
+    printf("%s loader default: %d rows; animation captures saved\n",vcpe_loading_log_height()==8?"PASS":"FAIL",vcpe_loading_log_height());
+}
+static void page_saves(void)
+{
+    panel(8,34,464,206);
+    vcpe_hud_text(14,42,"NATIVE PSP SAVEDATA",ACCENT,1);
+    vcpe_hud_printf(14,64,WHITE,"Counter %u   Last result 0x%08X",(unsigned)save_counter,(unsigned)save_result);
+    vcpe_hud_text(14,86,"PSP/SAVEDATA/UCJS19050DEMO00",WHITE,1);
+    vcpe_hud_text(14,106,"Title, slot name and icon appear in the XMB",GREY,1);
+    vcpe_hud_text(14,118,"Saved Data Utility after leaving the app.",GREY,1);
+    vcpe_hud_prompt(14,146,VCPE_BTN_CROSS,"SAVE (native dialog)",WHITE);
+    vcpe_hud_prompt(14,164,VCPE_BTN_CIRCLE,"LOAD (native dialog)",WHITE);
+    vcpe_hud_prompt(14,182,VCPE_BTN_TRIANGLE,"PREVIEW LOADING SCREEN",WHITE);
+    vcpe_hud_text(14,210,"Result 0 means success; firmware errors stay visible.",GREY,1);
+}
 static int blank_command(const char *cmd, const char *arg, int num, int num2, const char *line, unsigned *held)
 {
+    if (!strcmp(cmd,"savecheck")) { save_check(); return VCPE_CMD_NEXT; }
+    if (!strcmp(cmd,"loadpreview")) { loading_preview(); return VCPE_CMD_NEXT; }
+    if (!strcmp(cmd,"saveui")) { page=PAGE_SAVES; save_write(); return VCPE_CMD_NEXT; }
     if (!strcmp(cmd,"bench")) { page=PAGE_BENCH; bench_run(); return VCPE_CMD_NEXT; }
     if (!strcmp(cmd, "adapt")) { vcpe_adapt_enable(atoi(arg)); page = PAGE_ADAPT; return VCPE_CMD_NEXT; }
     if (!strcmp(cmd, "adaptfeed")) {
@@ -335,11 +412,14 @@ int main(int argc, char **argv)
             if (page == PAGE_ULTRA) vcpe_ev_post(VCPE_EV_GAME + 1, frames, 0, 0);
             if (page == PAGE_ADAPT) vcpe_adapt_enable(!vcpe_adapt_stats()->enabled);
             if (page == PAGE_BENCH) bench_run();
+            if (page == PAGE_SAVES) save_write();
         }
         if (page == PAGE_ULTRA && (pr & PSP_CTRL_UP)) vcpe_bb_set_int("counter", vcpe_bb_int("counter", 0) + 1);
         if (page == PAGE_ADAPT && (pr & PSP_CTRL_UP)) demo_feed(35000, 8192, 500);
         if (page == PAGE_ADAPT && (pr & PSP_CTRL_DOWN)) demo_feed(16683, 8192, 1600);
         if (page == PAGE_ADAPT && (pr & PSP_CTRL_TRIANGLE)) demo_loading();
+        if (page == PAGE_SAVES && (pr & PSP_CTRL_CIRCLE)) save_read();
+        if (page == PAGE_SAVES && (pr & PSP_CTRL_TRIANGLE)) loading_preview();
         frames++;
         vcpe_jobs_update();
 
@@ -349,7 +429,7 @@ int main(int argc, char **argv)
         vcpe_fill(0, 0, VCPE_SCR_W, 26, 0xC0000000);
         vcpe_hud_text_shadow(8, 5, "VCPE " VCPE_VERSION " BLANK ENGINE", ACCENT, 1);
         for (int p = 0; p < NPAGES; p++) {
-            float x = 8 + p * 70;
+            float x = 8 + p * 66;
             if (p == page) vcpe_fill(x - 3, 15, vcpe_hud_text_width(page_names[p], 1) + 6, 10, 0xFF40C8FF);
             vcpe_hud_text(x, 16, page_names[p], p == page ? 0xFF000000 : GREY, 1);
         }
@@ -359,6 +439,7 @@ int main(int argc, char **argv)
         else if (page == PAGE_ULTRA) page_ultra();
         else if (page == PAGE_ADAPT) page_adapt();
         else if (page == PAGE_BENCH) page_bench();
+        else if (page == PAGE_SAVES) page_saves();
         else {
             vcpe_hud_perf_detail(1);
             vcpe_hud_perf();
