@@ -47,10 +47,10 @@ int vcpe_diag_line(char *out,int n)
 {
     VcpeDiagStats s; vcpe_diag_stats(&s);
     return snprintf(out,n,"frames avg %u p95 %u p99 %u worst %u us, CPU %u GPU-wait %u IO %u us, audio %u, alloc fails %u",
-        s.average_us,s.p95_us,s.p99_us,s.worst_us,s.last_cost[0],s.last_cost[1],s.last_cost[2],s.last_cost[3],s.failures);
+        (unsigned)s.average_us,(unsigned)s.p95_us,(unsigned)s.p99_us,(unsigned)s.worst_us,(unsigned)s.last_cost[0],(unsigned)s.last_cost[1],(unsigned)s.last_cost[2],(unsigned)s.last_cost[3],(unsigned)s.failures);
 }
 int vcpe_diag_failure_line(int i,char *out,int n)
 {
     return i>=0 && i<16 && failed[i].name[0] ? snprintf(out,n,"%s: %u allocation failures, last %u bytes",
-        failed[i].name,failed[i].count,failed[i].bytes) : 0;
+        failed[i].name,(unsigned)failed[i].count,(unsigned)failed[i].bytes) : 0;
 }

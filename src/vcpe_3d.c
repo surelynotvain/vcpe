@@ -18,8 +18,11 @@
 #include <pspgu.h>
 #include <math.h>
 #include <pspgum.h>
+#include <string.h>
 #include "vcpe_gfx.h"
+#define VCPE_CULL_WEAK
 #include "vcpe_3d.h"
+#undef VCPE_CULL_WEAK
 
 #define BUF_W 512
 #define FB_SIZE (BUF_W * VCPE_SCR_H * 4)
@@ -27,6 +30,31 @@
 
 /* Triangles drawn this frame (perf lines). */
 int vcpe_stat_tris;
+int vcpe_stat_cull_tests, vcpe_stat_culled, vcpe_stat_cull_tris, vcpe_stat_cull_nodes;
+static int autocull = 1, active_3d;
+static const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+static float model_matrix[16];
+static VcpeCullPlanes camera_planes;
+
+void vcpe_3d_autocull(int on) { autocull=on!=0; }
+int vcpe_3d_autocull_enabled(void) { return autocull; }
+int vcpe_3d_prepare(const void *v,uint32_t nv,const uint16_t *idx,uint32_t ni)
+{ return vcpe_cull_prepare ? vcpe_cull_prepare(v,nv,idx,ni) : -1; }
+void vcpe_3d_geometry_changed(const void *v) { if(vcpe_cull_dirty)vcpe_cull_dirty(v); }
+void vcpe_3d_cull_reset(void) { if(vcpe_cull_reset)vcpe_cull_reset(); }
+uint32_t vcpe_3d_cull_bytes(void) { return vcpe_cull_cache_stats?vcpe_cull_cache_stats()->bytes:0; }
+int vcpe_3d_visible_box(const VcpeCullBox *box,const float *model)
+{
+    if(!autocull || !vcpe_cull_local_planes || !vcpe_cull_box_test) return 1;
+    VcpeCullPlanes local;vcpe_cull_local_planes(&local,&camera_planes,model);
+    return vcpe_cull_box_test(&local,box)!=0;
+}
+int vcpe_3d_visible_points(const void *v,uint32_t n,const float *model)
+{
+    if(!autocull || !vcpe_cull_box_points) return 1;
+    VcpeCullBox box;vcpe_cull_box_points(&box,v,n);
+    return vcpe_3d_visible_box(&box,model);
+}
 /* LOD statistics live here, so 3D games that never use LOD meshes need not link vcpe_lod */
 int vcpe_lod_stat_full, vcpe_lod_stat_drawn;
 static float fog_start, fog_end;
@@ -44,11 +72,33 @@ void vcpe_3d_fog(float start, float end, uint32_t color)
  * view (horizontal fr_th, vertical fr_tv), the matching sphere-margin factors and the near/far distances. */
 static float fr_pos[3], fr_right[3], fr_up[3], fr_fwd[3], fr_th, fr_tv, fr_sh, fr_sv, fr_near, fr_far, fr_k;
 
+/* Transform planes into object space: sphere support remains exact even with parent-induced shear. */
+int vcpe_3d_visible_local(const float c[3],float radius,const float *m)
+{
+    if(!autocull) return 1;
+    if(vcpe_cull_local_planes && vcpe_cull_sphere_test) {
+        VcpeCullPlanes local;vcpe_cull_local_planes(&local,&camera_planes,m);
+        return vcpe_cull_sphere_test(&local,c,radius);
+    }
+    if(!m) return vcpe_3d_visible(c,radius);
+    float center[3];
+    for(int k=0;k<3;k++)center[k]=m[k*4]*c[0]+m[k*4+1]*c[1]+m[k*4+2]*c[2]+m[k*4+3];
+    float s[3]={0},dot01=0,dot02=0,dot12=0;
+    for(int k=0;k<3;k++) {
+        s[0]+=m[k*4]*m[k*4];s[1]+=m[k*4+1]*m[k*4+1];s[2]+=m[k*4+2]*m[k*4+2];
+        dot01+=m[k*4]*m[k*4+1];dot02+=m[k*4]*m[k*4+2];dot12+=m[k*4+1]*m[k*4+2];
+    }
+    float sum=s[0]+s[1]+s[2],scale=fmaxf(s[0],fmaxf(s[1],s[2]));
+    if(fabsf(dot01)+fabsf(dot02)+fabsf(dot12)>0.000001f*sum)scale=sum;
+    return vcpe_3d_visible(center,radius*sqrtf(scale));
+}
+
 /* Is a sphere (centre c, radius r) at least partly inside the view? Transform its centre into camera space (dot
  * products with the axes), then test it against the near/far planes and the four side planes. Objects that fail are
  * not sent to the GE at all. */
 int vcpe_3d_visible(const float c[3], float r)
 {
+    if(vcpe_cull_sphere_test)return vcpe_cull_sphere_test(&camera_planes,c,r);
     float d[3] = {c[0] - fr_pos[0], c[1] - fr_pos[1], c[2] - fr_pos[2]};
     float z = d[0] * fr_fwd[0] + d[1] * fr_fwd[1] + d[2] * fr_fwd[2];
     if (z + r < fr_near || z - r > fr_far)
@@ -97,6 +147,9 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
         fr_near = znear;
         fr_far = zfar;
     }
+    camera_planes.valid=0;
+    if(vcpe_cull_camera)vcpe_cull_camera(&camera_planes,fr_pos,fr_right,fr_up,fr_fwd,fr_th,fr_tv,fr_near,fr_far);
+    memcpy(model_matrix,identity,sizeof model_matrix);active_3d=1;
     /* Depth: the PSP convention here is reversed (65535 = near, 0 = far), so the test is "greater or equal" and the
      * buffer is cleared to 0 (farthest). The depth mask is GU_FALSE, which on the GE means depth writes are ON. */
     sceGuDepthBuffer(ZB_ADDR, BUF_W);
@@ -141,6 +194,7 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
     sceGumMatrixMode(GU_MODEL);
     sceGumLoadIdentity();
     vcpe_stat_tris = 0;
+    vcpe_stat_cull_tests=vcpe_stat_culled=vcpe_stat_cull_tris=vcpe_stat_cull_nodes=0;
     vcpe_lod_stat_full = vcpe_lod_stat_drawn = 0;
 }
 
@@ -148,6 +202,7 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
  * the GU wants them transposed. */
 void vcpe_3d_model(const float *m)
 {
+    memcpy(model_matrix,m?m:identity,sizeof model_matrix);
     vcpe_gfx_flush();
     sceGumMatrixMode(GU_MODEL);
     if (!m) {
@@ -159,9 +214,40 @@ void vcpe_3d_model(const float *m)
     sceGumLoadMatrix(&g);
 }
 
-/* Draw an indexed triangle list (3 indices per triangle) with page as texture, or untextured with page < 0. */
+static void submit(const void *verts,const uint16_t *idx,int nidx)
+{
+    sceGumDrawArray(GU_TRIANGLES, GU_INDEX_16BIT | GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+                    nidx, idx, verts);
+    vcpe_stat_tris+=nidx/3;
+}
+
+/* Test the entire batch first; only intersecting batches need chunk tests. Consecutive retained chunks remain
+ * one draw, preserving all original index/alpha order. Entirely rejected batches never bind a texture. */
 void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
 {
+    if(nidx<=0 || !verts || !idx) return;
+    const VcpeCullMesh *mesh=0;
+    VcpeCullPlanes local;
+    int classification=2;
+    const VcpeCullChunk *chunks=0;
+    uint32_t count=0,first_visible=0;
+    if(autocull && active_3d && vcpe_cull_find && vcpe_cull_local_planes && vcpe_cull_box_test && vcpe_cull_bound && vcpe_cull_chunks) {
+        mesh=vcpe_cull_find(verts,idx,(uint32_t)nidx);
+        if(mesh) {
+            vcpe_stat_cull_tests++;
+            vcpe_cull_local_planes(&local,&camera_planes,model_matrix);
+            classification=vcpe_cull_box_test(&local,vcpe_cull_bound(mesh));
+            if(!classification) {vcpe_stat_culled++;vcpe_stat_cull_tris+=nidx/3;return;}
+        }
+    }
+    if(mesh && classification==1) {
+        chunks=vcpe_cull_chunks(mesh,&count);
+        for(;first_visible<count;first_visible++) {
+            if(vcpe_cull_box_test(&local,&chunks[first_visible].box))break;
+            vcpe_stat_cull_tris+=(int)chunks[first_visible].count/3;
+        }
+        if(first_visible==count) {vcpe_stat_culled++;return;}
+    }
     vcpe_gfx_flush();
     if (page >= 0) {
         if (!vcpe_bind_page(page))
@@ -171,9 +257,18 @@ void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
         vcpe_unbind();
         sceGuDisable(GU_TEXTURE_2D);
     }
-    sceGumDrawArray(GU_TRIANGLES, GU_INDEX_16BIT | GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-                    nidx, idx, verts);
-    vcpe_stat_tris += nidx / 3;
+    if(mesh && classification==1) {
+        uint32_t first=0,run=0;
+        for(uint32_t i=first_visible;i<count;i++) {
+            int visible=i==first_visible || vcpe_cull_box_test(&local,&chunks[i].box);
+            if(visible) {if(!run)first=chunks[i].first;run+=chunks[i].count;}
+            else {
+                if(run) {submit(verts,idx+first,(int)run);run=0;}
+                vcpe_stat_cull_tris+=(int)chunks[i].count/3;
+            }
+        }
+        if(run)submit(verts,idx+first,(int)run);
+    } else submit(verts,idx,nidx);
     if (page < 0)
         sceGuEnable(GU_TEXTURE_2D);
 }
@@ -197,6 +292,7 @@ void vcpe_3d_alpha(float a)
 /* Back to the 2D defaults: no depth, no fog, no alpha test, blending on, clamped textures. */
 void vcpe_3d_end(void)
 {
+    active_3d=0;
     vcpe_gfx_flush();
     sceGuDisable(GU_ALPHA_TEST);
     sceGuDisable(GU_DEPTH_TEST);

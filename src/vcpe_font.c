@@ -116,7 +116,7 @@ void vcpe_font_draw_centered(const VcpeFont *f, float cx, float cy, const char *
 void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float size, uint32_t color, int align)
 {
     int nchars = vcpe_utf8_len(s);
-    if (!nchars || !vcpe_bind_page(f->page))
+    if (!nchars)
         return;
     int lines = 1;
     for (const char *p = s; *p; p++) lines += *p == '\n';
@@ -151,6 +151,11 @@ void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float
         y -= f->height;
     }
     if (!n) return;
+    /* Transient label vertices need current-string bounds, not a stale cache keyed by a reused GU buffer. */
+    if(!vcpe_3d_visible_points(v,(uint32_t)n,m)) {
+        vcpe_stat_culled++;vcpe_stat_cull_tris+=n/3;return;
+    }
+    if(!vcpe_bind_page(f->page))return;
     vcpe_gfx_flush();
     vcpe_3d_model(m);
     sceGuEnable(GU_BLEND);

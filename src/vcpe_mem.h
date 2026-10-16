@@ -11,6 +11,11 @@
 #ifndef VCPE_MEM_H
 #define VCPE_MEM_H
 #include <stdint.h>
+/* Native utility handoff. Resume invalidates volatile contents and bumps vcpe_resume_gen (like sleep).
+ * Engine bundles reload automatically; game-owned volatile data must be regenerated on generation changes. */
+int vcpe_volatile_suspend(void); /* 1 yielded, 0 not locked, -1 error */
+int vcpe_volatile_resume(void);  /* 0 reclaimed or no handoff, -1 could not reclaim */
+int vcpe_volatile_suspended(void);
 
 /* 1 on a 32 MB console (PSP-1000). Measured once with vcpe_heap_kb(), so call it early, before big allocations */
 int vcpe_mem_32mb(void);

@@ -10,3 +10,7 @@ PARAM.SFO
 /tests/selftest/vcpe_obj/
 /tests/selftest/build/
 /tests/selftest/out/
+/tests/v50/out*/
+/tests/v50/dialog/
+/tests/v50/upgrade-build/
+/dist/

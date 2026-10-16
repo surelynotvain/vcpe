@@ -1,5 +1,36 @@
 # VCPE changelog
 
+## 5.0 (2026-10-16): upgrades, native savedata, loading and runtime budgets
+
+- Camera culling: optional `vcpe_cull`, automatic geometry-derived batch/chunk bounds, conservative
+  camera/model plane tests, contiguous retained-range submission, current 3D label bounds, mutable LOD refits,
+  a bounded heap cache, counters and A/B bypass. Generic 3D upgrades resolve the new optional dependency.
+  CPU contracts (including sanitizer/fast-math paths) and PSP builds are checked;
+  camera culling has no gameplay/performance acceptance yet.
+  `docs/camera-culling.md` documents ownership/invalidation and pending visual/performance playtesting.
+
+- `vcpe_version.h` is the shared release version, also used by the loading credit and Blank Engine.
+- Standard loading screen: `engineassets/hetalia-czechia.gif`, all 31 frames / original 3100 ms timing,
+  aspect preserved at 128x72, bottom-right “made with VCPE 5.0”; eight Linux-style status rows by default.
+  `vcpe_loading_log_lines` configures visible height (1..24 retained history).
+- Easy upgrade module `tools/vcpe_upgrade.py`: read-only plan, manifest-checked per-project engine snapshots,
+  Makefile wiring, common module dependencies, header rebuilds, idempotent apply, backup/status/rollback.
+  No gameplay, assets, save files, other projects or external engine installs are changed.
+- Optional `vcpe_savedata`: native save/load confirmation or automatic mode, XMB title/detail/icon metadata,
+  checked version/size/CRC envelope and explicit import of legacy two-slot saves without deleting originals.
+- `vcpe_gfx_end_overlay`: synchronous firmware overlay before swapping; normal end/pipeline behavior preserved.
+  `vcpe_volatile_suspend/resume`: utilities can borrow volatile memory without hanging; resume invalidates
+  its contents like sleep and schedules engine bundle reloads.
+- Completes the 4.7 improvements: deterministic collision broadphase; cached transforms and render sorting;
+  component allocation budgets/shared prefab remaps and stable paged record store; lazy TTF atlas allocation
+  without large static rebuild scratch; duplicate async pack completion and worker-start wakeup fixes;
+  bounded predictive prefetch; frame percentiles and module allocation diagnostics; pressure-aware adaptation.
+  `tests/v47` exercises ordering, contacts, state hashes, font coverage, allocation failures and real threads.
+- Blank Engine adds native SAVES controls, loader preview, savedata and benchmark autotests.
+- Upgrade/use instructions: `docs/upgrading-to-5.0.md`, `docs/savedata.md`, `docs/release-5.0.md`.
+- Public worker tests enqueue a complete batch before starting servers, synchronize observation of running jobs,
+  and isolate their generated PAKs in temporary directories instead of relying on fixed sleeps/shared paths.
+
 ## 4.7 (2026-10-16): automatic budgets, runtime optimization and loading
 
 - Collision broadphase preserves contact order and state in the deterministic fixture while reducing candidate checks.

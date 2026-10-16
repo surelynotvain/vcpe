@@ -22,6 +22,8 @@ void vcpe_gfx_shutdown(void);
 void vcpe_gfx_tables(const VcpePage *pages, const VcpeBundle *bundles, int nbundles);
 void vcpe_gfx_begin(uint32_t clear);
 void vcpe_gfx_end(void);
+/* Synchronous frame end with a firmware utility overlay, after GE completion and before buffer swap. */
+void vcpe_gfx_end_overlay(void (*overlay)(void));
 void vcpe_gfx_vsync(int on);    /* 0: vcpe_gfx_end swaps without waiting for the vblank (benchmarks; tears) */
 int vcpe_gfx_in_frame(void);    /* between vcpe_gfx_begin and vcpe_gfx_end */
 /* 4.0: the frame time in seconds from the vblanks counted between the last two frames shown (1/59.94 per vblank,

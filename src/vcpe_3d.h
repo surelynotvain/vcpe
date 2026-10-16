@@ -5,6 +5,7 @@
 #ifndef VCPE_3D_H
 #define VCPE_3D_H
 #include <stdint.h>
+#include "vcpe_cull.h"
 
 void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, float znear, float zfar);
 void vcpe_3d_model(const float *m16);   /* row-major 4x4 model matrix for the next draws; 0 = identity */
@@ -17,6 +18,20 @@ void vcpe_3d_end(void);
 int vcpe_3d_visible(const float center[3], float radius);
 int vcpe_3d_project(const float p[3], float *sx, float *sy);   /* world point -> screen pixels of the last camera; 0: behind it */
 
+/* Link vcpe_cull for automatic CPU rejection before texture binding/GE submission. Scene nodes prepare their
+ * batches themselves. Raw draw users prepare immutable geometry during loading; all LOD lists need preparation.
+ * Cache misses/allocation failures draw normally. Invalidate mutable vertices (all shared LODs) after edits.
+ * reset before freeing/replacing assets; a scene load resets the shared cache, so prepare raw batches afterward. */
+int vcpe_3d_prepare(const void *verts, uint32_t nverts, const uint16_t *idx, uint32_t nidx);
+void vcpe_3d_geometry_changed(const void *verts);
+void vcpe_3d_cull_reset(void);
+void vcpe_3d_autocull(int on);                 /* enabled by default when vcpe_cull is linked; 0: A/B bypass */
+int vcpe_3d_autocull_enabled(void);
+int vcpe_3d_visible_local(const float center[3], float radius, const float *model16);
+int vcpe_3d_visible_box(const VcpeCullBox *box, const float *model16);
+int vcpe_3d_visible_points(const void *verts, uint32_t count, const float *model16); /* transient VcpeVtx list */
+uint32_t vcpe_3d_cull_bytes(void);
+
 /* LOD meshes (vcpe_lod.h): the last camera as a picker view (thresh_px: error allowed on screen), and drawing one
  * level of a mesh with the current model matrix */
 #include "vcpe_lod.h"
@@ -24,5 +39,6 @@ void vcpe_3d_lod_view(VcpeLodView *v, float thresh_px);
 void vcpe_3d_draw_lod(int page, const VcpeLodMesh *m, int level);
 
 extern int vcpe_stat_tris;   /* triangles submitted this frame */
+extern int vcpe_stat_cull_tests, vcpe_stat_culled, vcpe_stat_cull_tris, vcpe_stat_cull_nodes;
 
 #endif

@@ -31,4 +31,10 @@ sh "$H/host/lod_test.sh"
 python3 "$H/native-data/run.py"
 sh "$H/memory/run.sh"
 sh "$H/v47/run.sh"
-echo 'PASS VCPE 4.7 host suites'
+sh "$H/culling/run.sh"
+python3 "$H/v50/upgrade.py"
+"$CC" $FLAGS -ffunction-sections -fdata-sections -Wno-deprecated-declarations \
+    -I"$H/memory/stubs" -I"$V/src" "$H/v50/volatile.c" "$V/src/vcpe_mem.c" \
+    -Wl,--gc-sections -o "$D/volatile"
+"$D/volatile"
+echo 'PASS VCPE 5.0 host suites'
