@@ -1,4 +1,9 @@
 /* VCPE text drawing (see vcpe_font.h). */
+
+/* Bitmap fonts baked on the PC from TTF/OTF files (tools/vcpe_font.py): every glyph is a rectangle on one texture
+ * page, with its offset from the pen and its advance. Glyphs are sorted by codepoint, so lookups are binary searches.
+ * Text is drawn in "white" mode (vcpe_tex_white): the texture gives the shape, the vertex colour the colour. A
+ * character limit (max_chars) supports typewriter-style text that appears letter by letter. */
 #include <string.h>
 #include <pspgu.h>
 #include <pspgum.h>
@@ -6,6 +11,7 @@
 #include "vcpe_3d.h"
 #include "vcpe_font.h"
 
+/* Decode one UTF-8 character (1 to 4 bytes) and advance the pointer. */
 static uint32_t next_cp(const char **ps)
 {
     const unsigned char *s = (const unsigned char *)*ps;
@@ -38,6 +44,7 @@ static const VcpeGlyph *glyph(const VcpeFont *f, uint32_t cp)
     return 0;
 }
 
+/* Width of one line, stopping at '\n' or when the character limit runs out (*left < 0 = no limit). */
 static float line_width(const VcpeFont *f, const char *s, int *left, float scale)
 {
     float w = 0;
@@ -55,6 +62,7 @@ float vcpe_font_width(const VcpeFont *f, const char *s, int max_chars, float sca
     return line_width(f, s, &left, scale);
 }
 
+/* Draw one line, one quad per visible glyph; characters past the limit are skipped but still consumed. */
 static const char *draw_line(const VcpeFont *f, float x, float y, const char *s, int *left, uint32_t color, float scale)
 {
     while (*s && *s != '\n') {
@@ -102,6 +110,9 @@ void vcpe_font_draw_centered(const VcpeFont *f, float cx, float cy, const char *
     vcpe_tex_white(0);
 }
 
+/* Text placed in the 3D scene by a matrix (signs, labels): the glyph quads become pairs of triangles in a temporary
+ * vertex block, with texture coordinates normalised to 0..1 as 3D drawing expects, drawn with depth test on but
+ * without writing depth. */
 void vcpe_font_draw3d(const VcpeFont *f, const float m[16], const char *s, float size, uint32_t color, int align)
 {
     int nchars = vcpe_utf8_len(s);

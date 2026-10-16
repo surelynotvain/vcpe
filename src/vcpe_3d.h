@@ -17,6 +17,12 @@ void vcpe_3d_end(void);
 int vcpe_3d_visible(const float center[3], float radius);
 int vcpe_3d_project(const float p[3], float *sx, float *sy);   /* world point -> screen pixels of the last camera; 0: behind it */
 
+/* LOD meshes (vcpe_lod.h): the last camera as a picker view (thresh_px: error allowed on screen), and drawing one
+ * level of a mesh with the current model matrix */
+#include "vcpe_lod.h"
+void vcpe_3d_lod_view(VcpeLodView *v, float thresh_px);
+void vcpe_3d_draw_lod(int page, const VcpeLodMesh *m, int level);
+
 extern int vcpe_stat_tris;   /* triangles submitted this frame */
 
 #endif

@@ -1,4 +1,21 @@
 /* VCPE mouse simulation (see vcpe_mouse.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * PC games built around a mouse (inventories, point-and-click, card games) are played on the PSP with a simulated
+ * pointer:
+ * - the analog stick moves it. Speed is in pixels per second and multiplied by the real frame time, so a slow frame
+ *   doesn't slow the pointer; a deadzone ignores the stick's rest jitter, a curve gives fine control near the centre,
+ *   the stick's rim adds a boost and a "slow" button allows precise aiming;
+ * - the d-pad jumps ("warps") to the nearest point of interest (button, slot, card) in that direction. The game lists
+ *   its targets in a callback, called only when a warp is asked for;
+ * - PSP buttons act as the left, right and middle mouse buttons, and two more as the wheel.
+ *
+ * From the buttons the module derives the usual mouse events: press, release, click, double-click (two clicks within
+ * double_frames and drag_px of each other), drag start (the pointer moved more than drag_px while held) and drop.
+ * Events are "latched": they stay set until the game reads them, so none are lost between updates.
+ *
+ * The autotest commands at the bottom drive the pointer from test scripts (move, glide, click, drag, warp, wheel). */
 #include <pspctrl.h>
 #include <pspkernel.h>
 #include <math.h>
@@ -13,11 +30,13 @@
 /* vcpe_log is optional: "mpos" logs only when the game links vcpe_log */
 extern void vcpe_log(const char *fmt, ...) __attribute__((weak));
 
+/* Points of interest collected for a warp. */
 #define MAX_POI 512
 
 float vcpe_mouse_x = VCPE_SCR_W / 2, vcpe_mouse_y = VCPE_SCR_H / 2;
 static VcpeMouseConf cf;
 static int inited;
+/* The area the pointer may move in (default: the whole screen). */
 static float bx0, by0, bx1 = VCPE_SCR_W - 1, by1 = VCPE_SCR_H - 1;
 static uint32_t held, latch_pressed, latch_released;
 static int moved, idle, wheel_latch;
@@ -35,12 +54,15 @@ static float warp_from_x, warp_from_y;
 static int wheel_frames[2];
 
 /* autotest */
+/* Multi-frame script actions in progress (a click is down one frame, up the next; a drag moves over several frames).
+ */
 enum { ACT_NONE, ACT_CLICK, ACT_DCLICK, ACT_GLIDE, ACT_DRAG };
 static uint32_t script_held;          /* buttons held by the script */
 static struct { int type, frame, n; uint32_t btn; float x0, y0, x1, y1; } act;
 static uint32_t script_warp;          /* a d-pad direction for one warp */
 static int script_wheel;
 
+/* Defaults copied from a shipped console port's controller cursor, scaled from 1920 to 480 pixels wide. */
 void vcpe_mouse_defaults(VcpeMouseConf *c)
 {
     memset(c, 0, sizeof *c);
@@ -87,6 +109,7 @@ void vcpe_mouse_bounds(float x, float y, float w, float h)
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+/* Move the pointer, kept inside the bounds. */
 void vcpe_mouse_set(float x, float y)
 {
     float nx = clampf(x, bx0, bx1), ny = clampf(y, by0, by1);
@@ -112,6 +135,8 @@ void vcpe_mouse_poi(float x, float y)
 
 void vcpe_mouse_poi_rect(float x, float y, float w, float h) { vcpe_mouse_poi(x + w / 2, y + h / 2); }
 
+/* Warp in direction (dx, dy): among the points of interest within warp_angle of that direction (and not closer than
+ * warp_min_dist), take the one with the best score; the score prefers close targets and straight-ahead ones. */
 int vcpe_mouse_warp(float dx, float dy)
 {
     float l = sqrtf(dx * dx + dy * dy);
@@ -131,6 +156,7 @@ int vcpe_mouse_warp(float dx, float dy)
         float dist = sqrtf(ox * ox + oy * oy);
         if (dist < cf.warp_min_dist)
             continue;
+        /* Angle between the direction and the target, from the dot product of the two unit vectors. */
         float c = (ox * dx + oy * dy) / dist;
         float angle = acosf(clampf(c, -1, 1));
         if (angle > max_angle)
@@ -154,6 +180,8 @@ int vcpe_mouse_warp(float dx, float dy)
 int vcpe_mouse_warped(void) { int r = latch_warped; latch_warped = 0; return r; }
 void vcpe_mouse_warp_from(float *x, float *y) { if (x) *x = warp_from_x; if (y) *y = warp_from_y; }
 
+/* D-pad warping: a new direction warps at once; holding it repeats after warp_first frames, then every warp_rapid
+ * frames. */
 static void dpad_warp(uint32_t psp)
 {
     uint32_t d = psp & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT);
@@ -179,6 +207,7 @@ static void dpad_warp(uint32_t psp)
 
 /* ---- the frame ---- */
 
+/* A button used as a wheel: one step when pressed, then auto-repeat while held. */
 static void wheel_button(int i, uint32_t on, int step)
 {
     if (!on) {
@@ -190,6 +219,7 @@ static void wheel_button(int i, uint32_t on, int step)
         wheel_latch += step;
 }
 
+/* Once per update: move the pointer, warp, then turn the buttons into mouse events. */
 void vcpe_mouse_update(void)
 {
     if (!inited)
@@ -227,6 +257,7 @@ void vcpe_mouse_update(void)
     wheel_button(0, psp & cf.wheel_up, 1);
     wheel_button(1, psp & cf.wheel_down, -1);
 
+    /* Mouse buttons held now (script and pad), and which went down / up since the last update. */
     /* buttons */
     uint32_t h = script_held;
     if (psp & cf.left) h |= VCPE_MB_LEFT;
@@ -237,6 +268,8 @@ void vcpe_mouse_update(void)
     latch_pressed |= down;
     latch_released |= up;
 
+    /* Left button: remember where it went down; while held, moving more than drag_px starts a drag. On release, a
+     * drag becomes a drop, otherwise a click; a second click soon enough and close enough is a double-click (2). */
     /* left: click / drag / drop */
     if (down & VCPE_MB_LEFT) {
         press_x = vcpe_mouse_x;
@@ -269,6 +302,7 @@ void vcpe_mouse_update(void)
         idle++;
 }
 
+/* Event readers: each returns its latched value and clears it (read once). */
 int vcpe_mouse_moved(void) { return moved; }
 int vcpe_mouse_idle(void) { return idle; }
 int vcpe_mouse_visible(void) { return cf.hide_idle_frames <= 0 || idle < cf.hide_idle_frames; }
@@ -282,6 +316,7 @@ int vcpe_mouse_dragging(void) { return dragging; }
 int vcpe_mouse_dropped(void) { int r = latch_dropped; latch_dropped = 0; return r; }
 void vcpe_mouse_press_pos(float *x, float *y) { if (x) *x = press_x; if (y) *y = press_y; }
 
+/* The game refused a drag (nothing to pick up): the release that follows is neither a drop nor a click. */
 void vcpe_mouse_cancel_drag(void)
 {
     dragging = 0;
@@ -294,6 +329,8 @@ int vcpe_mouse_in(float x, float y, float w, float h)
     return vcpe_mouse_x >= x && vcpe_mouse_x < x + w && vcpe_mouse_y >= y && vcpe_mouse_y < y + h;
 }
 
+/* Pointer shapes drawn as text art: 'X' is the dark outline, '.' the white fill, each with its hot spot (the pixel
+ * that points). */
 /* ---- built-in pointers: 'X' outline, '.' fill, hot spot per shape ---- */
 
 static const char *const arrow[] = {
@@ -313,6 +350,7 @@ static const char *const cross[] = {
 static const struct { const char *const *rows; int hx, hy; } shapes[] = {
     {arrow, 0, 0}, {hand, 5, 0}, {grab, 8, 4}, {cross, 5, 5}};
 
+/* Draw a built-in pointer at the mouse position, one filled square per art pixel, so it scales to any size. */
 void vcpe_mouse_draw(int shape, float scale)
 {
     if (shape < 0 || shape > VCPE_CURSOR_CROSS)
@@ -344,6 +382,7 @@ static uint32_t btn_named(const char *s)
     return VCPE_MB_LEFT;
 }
 
+/* Autotest commands for the mouse (chain it before the game's own command hook). */
 int vcpe_mouse_command(const char *cmd, const char *arg, int num, int num2, const char *line, unsigned *held_psp)
 {
     float a[5] = {0};
@@ -405,6 +444,8 @@ int vcpe_mouse_command(const char *cmd, const char *arg, int num, int num2, cons
     return VCPE_CMD_UNKNOWN;
 }
 
+/* Called by the harness before reading the next script line: while a multi-frame action is running, advance it and
+ * hold the script. */
 int vcpe_mouse_busy(unsigned *held_psp)
 {
     switch (act.type) {

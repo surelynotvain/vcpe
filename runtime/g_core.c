@@ -1,3 +1,16 @@
+/* HOW THIS FILE WORKS (the script layer)
+ *
+ * Unity games run their logic in MonoBehaviour scripts with fixed callbacks (Awake, OnEnable, Start, FixedUpdate,
+ * Update, OnDisable, OnTriggerEnter2D...). The game's scripts are rewritten in C; each script type provides a table
+ * of C functions (ScriptVT: init = Awake, enable, start, fixed, update, disable, trigger, collision, event) and the
+ * size of its per-instance state (self). This file calls them in Unity's order:
+ *
+ * g_update(dt) per frame: Start of every newly active script (before its first physics step, as in Unity) FixedUpdate
+ * + physics, at a fixed 50 Hz (0.02 s), as many steps as the frame time needs (at most 4) Start (late arrivals) +
+ * Update animators (evaluate, then write their values), particles, delayed destroys
+ *
+ * Activity changes (SetActive) send OnEnable / OnDisable to the scripts of every object whose activeInHierarchy
+ * flipped, parents before children. Scene changes requested by scripts happen between frames (g_scene_switch). */
 #include <string.h>
 #include <stdlib.h>
 #include <psptypes.h>
@@ -11,12 +24,14 @@
 #include "aw_gfx.h"
 #include "w_path.h"
 
+/* Game time, like Unity's Time: scale, delta (scaled), unscaled delta, and both clocks. */
 GameTime T = {1, 0, 0, 0, 0};
 static int requested_scene = -1;
 
 extern const ScriptVT *const g_vt_table[];
 const ScriptVT *g_vt[NUM_SCRIPT_TYPES];
 
+/* The game provides g_vt_table, one behaviour table per script type (0 = a type with no behaviour). */
 static void vt_init(void)
 {
     static int done;
@@ -26,6 +41,7 @@ static void vt_init(void)
         g_vt[i] = g_vt_table[i];
 }
 
+/* Allocate a script's own state block (its fields in C), zeroed. */
 static void script_create(Script *s)
 {
     const ScriptVT *vt = g_vt[s->type];
@@ -35,6 +51,7 @@ static void script_create(Script *s)
         s->self = calloc(1, vt->size);
 }
 
+/* Awake runs once per script, the first time its object is active. */
 /* Awake: the first time the object is active in hierarchy */
 static void script_awake(Script *s)
 {
@@ -47,6 +64,8 @@ static void script_awake(Script *s)
 }
 
 static void scripts_changed(void);
+/* A scene was loaded: set up animators, particles, physics and pathfinding, create every script, then send
+ * Awake/OnEnable to the active objects. */
 void hooks_load(void)
 {
     scripts_changed();
@@ -102,6 +121,8 @@ void hooks_destroy(int obj)
             g_anim[a].alive = 0;
 }
 
+/* Index: for each object, its scripts as a linked list (sc_first / sc_next), so callbacks for one object don't scan
+ * every script. */
 /* scripts by object (ascending script order), rebuilt lazily after loads / instantiates / destroys */
 static int16_t *sc_first, *sc_next;
 static int sc_cap = -1, sc_valid;
@@ -128,6 +149,7 @@ static void scripts_index(void)
     sc_valid = 1;
 }
 
+/* OnEnable for an object's scripts (Awake first if it never ran). */
 void hooks_enable(int obj)
 {
     scripts_index();
@@ -141,6 +163,7 @@ void hooks_enable(int obj)
     }
 }
 
+/* OnDisable for an object's scripts; its trails are cleared too. */
 void hooks_disable(int obj)
 {
     scripts_index();
@@ -161,6 +184,7 @@ int hook_anim_new(int go, int ctrl, int update, int enabled, int bind_first)
 static uint8_t *prev_ah;
 static int prev_n;
 int g_prof_act, g_prof_hier;
+/* Something may have changed activity anywhere: compare every object's activeInHierarchy before and after. */
 void w_activity_changed(void)
 {
     g_prof_act++;
@@ -183,6 +207,8 @@ void w_activity_changed(void)
 }
 
 /* SetActive on one object: only its subtree can change activeInHierarchy */
+/* Faster path for SetActive on one object: walk only its subtree (depth first, with an explicit stack that grows if
+ * needed), collect the objects whose activity flips, then send their events in order. */
 void w_activity_subtree(int root)
 {
     if (root < 0 || root >= W.nobj)
@@ -241,6 +267,7 @@ void w_activity_subtree(int root)
 
 const void *w_anim_section(int *count);
 
+/* GetComponent<T>(): the first live script of a type on an object. */
 Script *script_on(int go, int type)
 {
     if (go < 0 || go >= W.nobj)
@@ -279,6 +306,8 @@ void g_send_event(int go, int fn, int iarg, float farg)
     }
 }
 
+/* OnTriggerEnter2D: delivered to the scripts of the collider's object and its parents, up to the object with the
+ * Rigidbody2D (as Unity does). */
 void g_trigger_enter(int go, int other_go, int other_col)
 {
     int curr = go;
@@ -315,6 +344,7 @@ void g_collision_enter(int go, int other_go, float rel)
 static int (*scene_filter)(int scene);
 void g_scene_filter(int (*fn)(int scene)) { scene_filter = fn; }
 
+/* SceneManager.LoadScene: remembered and done between frames; the game may redirect it (a demo build). */
 void g_scene_request(int scene)
 {
     requested_scene = scene_filter ? scene_filter(scene) : scene;
@@ -325,6 +355,7 @@ static int lang_pending = -1;
 /* Settings > Language: takes effect on the next scene load, when no text points into the old language */
 void g_lang_request(int on) { lang_pending = on; }
 
+/* Between frames: perform a requested scene load, switching the language first if one was chosen. */
 void g_scene_switch(void)
 {
     int sc = requested_scene;
@@ -339,12 +370,14 @@ void g_scene_switch(void)
         w_load(sc);
 }
 
+/* Unity's default fixed time step: 50 physics steps per second. */
 #define FIXED_DT 0.02f
 static float fixed_acc;
 
 long long g_prof[8];
 #define PROF_T() (g_autotest ? (long long)sceKernelGetSystemTimeWide() : 0)
 extern int g_autotest;
+/* One frame of game logic. udt = real (unscaled) frame time. */
 void g_update(float udt)
 {
     long long pt = PROF_T(), pn;

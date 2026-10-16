@@ -12,6 +12,9 @@ def pow2(v):
     return p
 
 
+# Rasterize every character with Pillow and pack them left to right in rows of the font's line height (1-2 px gaps
+# keep linear filtering from bleeding between glyphs). Each glyph records where it is (u, v, w, h), its offset from
+# the pen position (xoff, yoff from the bounding box) and its advance.
 def bake(path, px, chars, width=256):
     font = ImageFont.truetype(path, px)
     asc, desc = font.getmetrics()

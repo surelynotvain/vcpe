@@ -2,6 +2,9 @@
 Values stay raw strings; helpers decode what the converter needs."""
 import re
 
+# A .tscn file is a list of sections: a header line in brackets ([ext_resource ...], [sub_resource ...], [node ...])
+# followed by "key = value" lines. A value can span several lines (arrays, dictionaries): bracket depth is counted,
+# and lines are collected until it returns to zero.
 HDR = re.compile(r'^\[(\w+)(.*)\]\s*$')
 ATTR = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)')
 
@@ -52,6 +55,7 @@ def parse(path):
     return {"ext": ext, "sub": sub, "nodes": nodes}
 
 
+# Split a mesh's _surfaces array into one dict per surface (its blocks are separated by "}, {").
 def surfaces(raw):
     """ArrayMesh _surfaces -> list of dicts with format, vertex_count, index_count, primitive, material, name"""
     out = []

@@ -1,9 +1,17 @@
-# VCPE: Vain's C Portable Engine
+# VCPE 4.7: Vain's C Portable Engine
 
 A game engine in plain C for the **Sony PlayStation Portable**, built for demakes: PC games rewritten to run on the
 PSP's 333 MHz CPU, its GE graphics chip and its 32 or 64 MB of memory.
 
 VCPE has no splash screen and no scripting requirement. A game links only the modules it uses.
+
+**Current release: [VCPE 4.7](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.7).**
+This release adds automatic cosmetic and memory budgets, deterministic runtime optimizations, predictive loading,
+diagnostics, reservation workers, compact asset packs and mesh LOD. Existing games adopt a new engine version
+explicitly; adaptive quality, batching and pipelining remain opt-in.
+
+The [upgrade guide](docs/upgrading-to-4.7.md) explains integration and measured checks. The
+[Blank Engine](docs/blank-engine.md) builds a standalone engine demo with no game files.
 
 ## Versions
 
@@ -17,36 +25,70 @@ VCPE has no splash screen and no scripting requirement. A game links only the mo
 | **3.3** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-3.3) | `vcpe_mouse`: a PC mouse simulated with the analog stick and buttons (warps, drag and drop, wheel) |
 | **3.4** | in 3.5 | `vcpe_mem`: PSP-1000 (32 MB) support, the 4 MB volatile partition, texture slabs that can't fragment; `vcpe_load`: the standard loading screen with a boot log |
 | **3.5** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-3.5) | `vcpe_data`: read-only structured data from converters; `vcpe_tiles`: visible-tile batching for 2D maps |
-| **4.0** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.0), `main` | Text binds its texture once instead of once per string, O(1) sprite cache, pooled coroutine threads, sleep/resume reload behind the loading screen, display-list overflow guard, arenas, vblank and GE timing, one standard perf and memory line |
+| **4.0** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.0) | Text binds its texture once instead of once per string, O(1) sprite cache, pooled coroutine threads, sleep/resume reload behind the loading screen, display-list overflow guard, arenas, vblank and GE timing, one standard perf and memory line |
+| **4.1** | in 4.7 | Event bus, blackboard and live tuning; priority reservation workers; compact asset packs; mesh LOD and offline tools; standalone Blank Engine |
+| **4.5** | in 4.7 | Variable-size checked saves and optional multichannel ADPCM streams with intro/loop points, pitch, fades and resumable positions |
+| **4.7** | [Release](https://github.com/surelynotvain/vcpe/releases/tag/vcpe-4.7), `main` | Memory budgets and automatic cosmetic scaling; cached transforms and draw ordering; deterministic collision broadphase; demand-grown effects/components and stable stores; lazy font atlas; predictive loading; frame and allocation diagnostics |
 
 3.1, 3.2 and 3.4 have no snapshot of their own: they were finished on the way to the next version, and their source
-is part of 3.3 and 3.5. [CHANGELOG.md](CHANGELOG.md) describes every version from 3.1 on, and
-[docs/upgrading-to-4.0.md](docs/upgrading-to-4.0.md) says what a game can adopt.
+is part of 3.3 and 3.5. The 4.1 and 4.5 development iterations are included in 4.7 without separate release tags.
+[CHANGELOG.md](CHANGELOG.md) describes the releases, and [docs/upgrading-to-4.7.md](docs/upgrading-to-4.7.md)
+says what a game can adopt.
 
 There is no published roadmap. Features are added when the engine needs them, and are listed here once they are
 released.
 
+## Build and check
+
+Build the standalone engine with Podman and the [pspdev](https://github.com/pspdev/pspdev) toolchain image:
+
+```sh
+sh blank/build.sh
+```
+
+Copy `blank/EBOOT.PBP` to `PSP/GAME/VCPEBLANK/`. Left/right changes pages: SYSTEM, JOBS, ULTRA, PERF, ADAPT
+and BENCH. HOME exits. The demo enables adaptation so its behavior can be inspected; games opt in separately.
+
+Run the host suites with a C compiler, Python 3, Pillow, NumPy, Fontconfig and a system TrueType font:
+
+```sh
+sh tests/run.sh
+```
+
+The font-cache test reads `stb_truetype.h` from the pspdev container unless `VCPE_STB_INCLUDE` points to a local
+copy. The tests use temporary synthetic data. Set `VCPE_AUDIO_BASELINE` to an older `vcpe_audio.c` to compare
+400 mixer output blocks byte for byte. To run the standalone PSP self-test:
+
+```sh
+PSP_EMU=/path/to/PPSSPPHeadless sh tests/selftest/run.sh
+```
+
 ## How it is tested
 - **Frame-exact recordings.** Autotest scripts drive a build in PPSSPP headless with a fixed time step and seed. Every
-  engine change is built against several games and compared frame by frame with the previous version.
-  Behaviour changes stay opt-in until they draw the same frames.
-- **Self-test EBOOT.** One EBOOT exercises every built-in module: the PAK, math, saves, audio, input, mouse,
+  regression run can build several engine clients and compare their output with the previous version.
+  A change that affects output needs an explanation or an opt-in switch.
+- **Self-test EBOOT.** A standalone EBOOT exercises the PAK, math, saves, audio, input, mouse,
   memory, loading screen, coroutines and the 4.0 binding cache. It also checks that batched and pipelined
   snapshots match the plain one.
-- **Host tests.** Plain-gcc tests for the mixer, math accuracy, saves, input edges and file converters.
-- **Hardware.** Audio, sleep/resume and the GE texture cache can't be proven in an emulator, so they are checked on
-  a PSP.
+- **Host tests.** Runtime state/contact hashes, draw ordering and conservative bounds, font eviction and allocation
+  failure, real-thread loading, adaptive pressure handling, memory, math, saves, input and converter checks.
+- **4.7 verification.** Host suites and standalone PPSSPP checks pass. The controlled collision fixture reduces
+  candidates from 3,941,120 to 614,650 with identical state/contact hashes. These numbers describe that fixture,
+  not a guaranteed speedup in every game. See the [release checks](docs/upgrading-to-4.7.md#verification).
+- **Hardware.** This release has no new physical PSP verification. Emulator results do not establish GE texture-cache,
+  real memory-stick, sleep/resume or audio-timing behavior. Test those on each supported console before release.
 
 ## Layout
 
 | Folder | What it is |
 |---|---|
-| [`src/`](src/) | The engine modules (`vcpe_*.c/.h`); `vcpe.h` includes them all |
+| [`src/`](src/) | Engine modules (`vcpe_*.c/.h`); `vcpe.h` gathers common APIs, with separate headers for optional modules |
 | [`runtime/`](runtime/) | The 2D runtime from 2.0 |
 | [`tools/`](tools/) | Converters: texture pages, ADPCM sound, PAK writer, fonts, Godot 4 scene helpers, XMB icon/background/sound makers |
-| [`docs/`](docs/) | Guides: upgrading, the PSP-1000, input and converters |
-| [`engineassets/`](engineassets/) | Source pictures of the error screen and the loading animation (third-party, see the license) |
-| [`tests/`](tests/) | Host tests |
+| [`blank/`](blank/) | Standalone engine UI, diagnostics and demonstrations |
+| [`docs/`](docs/) | Upgrading, automatic budgets, memory, jobs/packs, LOD, the PSP-1000, input and converters |
+| [`engineassets/`](engineassets/) | Error/loading/Blank Engine pictures (third-party, see the license); generated image data retains those owners' terms |
+| [`tests/`](tests/) | Host suites and a portable standalone PSP self-test |
 | [`LICENSE`](LICENSE), [`AI_POLICY.md`](AI_POLICY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CHANGELOG.md`](CHANGELOG.md) | Terms, how AI is used, how to contribute, what changed |
 
 A game's Makefile compiles the modules it lists from `src/` (and `runtime/` if it uses it) next to its own code,

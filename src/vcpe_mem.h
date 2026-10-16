@@ -24,6 +24,9 @@ int vcpe_mem_peak_kb(void);
 /* 4.0: the largest block malloc can give now (= vcpe_heap_kb). Compared with the free total it shows fragmentation:
  * a heap 40% free that can't fit a 2 MB block */
 int vcpe_mem_largest_free_kb(void);
+/* Cheap headroom estimate: unallocated user-partition memory plus free space already held by malloc.
+ * Includes fragmented space, so this is not a guarantee that one allocation of that size will fit. */
+int vcpe_mem_available_kb(void);
 /* 4.0: one standard memory line for logs, the same in every game ("mem level 3: used 14210 KB (peak 15002) largest
  * free 5120 KB, holes 830 KB, sprites 2048 KB (31 loads, 0 failed), dlist peak 96 KB"). Parts of modules the game
  * does not link are left out. Print it at scene switches. Probes the heap: not every frame */
@@ -35,7 +38,9 @@ int vcpe_mem_report(char *out, int n, const char *tag);
  * them); else the game's block, e.g. the volatile partition for data it can read again after a sleep */
 typedef struct { uint8_t *base, *own; uint32_t size, used, peak; } VcpeArena;
 int vcpe_arena_init(VcpeArena *a, void *mem, uint32_t size);
-void *vcpe_arena_alloc(VcpeArena *a, uint32_t size, uint32_t align);   /* 0 when it does not fit */
+/* align: a power of two (values below 4 become 4); aligns the address even in caller-supplied memory.
+ * Returns 0 without moving the cursor on bad alignment, overflow or exhaustion. */
+void *vcpe_arena_alloc(VcpeArena *a, uint32_t size, uint32_t align);
 static inline void vcpe_arena_reset(VcpeArena *a) { a->used = 0; }
 static inline uint32_t vcpe_arena_mark(const VcpeArena *a) { return a->used; }
 static inline void vcpe_arena_release(VcpeArena *a, uint32_t mark) { if (mark <= a->used) a->used = mark; }

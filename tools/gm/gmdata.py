@@ -5,6 +5,8 @@ Parses every chunk the PSP runtime needs into plain Python objects. Pointers in 
 import struct
 
 
+# Little-endian readers at absolute offsets in the file. GameMaker stores strings as an offset to their characters,
+# with the length 4 bytes before.
 class R:
     def __init__(self, b):
         self.b = b
@@ -41,6 +43,9 @@ EVENT_NAMES = ['Create', 'Destroy', 'Alarm', 'Step', 'Collision', 'Keyboard', 'M
                'KeyRelease', 'Trigger', 'CleanUp', 'Gesture', 'PreCreate']
 
 
+# A GameMaker data file is an IFF-style "FORM" of chunks (GEN8 = general info, STRG = strings, TXTR = texture pages,
+# TPAG = rectangles on them, SPRT = sprites, BGND = backgrounds, SOND = sounds, FONT, OBJT = objects, ROOM, SCPT =
+# scripts, CODE = bytecode). The constructor indexes the chunks, then reads each one into Python objects.
 class GMData:
     def __init__(self, path):
         self.path = path
@@ -69,6 +74,7 @@ class GMData:
         self.scripts()
         self.code()
 
+    # (offset, length) of a chunk's contents, (0, 0) when the file has none.
     def chunk(self, n):
         return self.chunks.get(n, (0, 0))
 

@@ -19,6 +19,7 @@ def swizzle(data, width_bytes, height):
     return a.tobytes()
 
 
+# Same skyline packer as vcpe_tex.Skyline, fixed to one 256x256 page.
 class Shelf:
     """skyline packer on one page"""
 
@@ -64,6 +65,7 @@ class Shelf:
         return best
 
 
+# RGBA pixels as one 32-bit number each, so whole frames can be compared and counted with numpy.
 def rgba_u32(a):
     return (a[..., 0].astype(np.uint32) | (a[..., 1].astype(np.uint32) << 8) | (a[..., 2].astype(np.uint32) << 16) |
             (a[..., 3].astype(np.uint32) << 24))
@@ -99,6 +101,10 @@ class TexBuilder:
         """returns the image index"""
         return self.add_frames(name, [self.crop(t) for t in tpags])
 
+    # Convert one image (all its frames): find its colours, give it a palette, cut it into pieces and place them.
+    # Palette index 0 is always transparent. Up to 15 colours: a 4-bit image (16-entry palette); up to 255: 8-bit with
+    # the exact colours; more: all frames are stacked into one atlas and quantized together, so every frame shares one
+    # palette. Frames bigger than a page are split into 256x256 pieces.
     def add_frames(self, name, frames):
         """Engine-independent RGBA frames: [(offset_x, offset_y, numpy_rgba), ...]."""
         crops = [f[2] for f in frames if f is not None and f[2].size]
@@ -175,6 +181,8 @@ class TexBuilder:
         self.images.append(dict(name=name, pal=palb, bpp=bpp, frames=out_frames))
         return len(self.images) - 1
 
+    # Put a piece on a page of its bit depth, with a 1-pixel gap (no bleeding with linear filtering). Only the last 4
+    # pages are tried, so pieces of one image stay close together, then a new page is opened.
     def place(self, bpp, part):
         h, w = part.shape
         pw, ph = min(w + 1, PAGE), min(h + 1, PAGE)   # 1 px gap
@@ -192,6 +200,8 @@ class TexBuilder:
         pages[i][1][y:y + h, x:x + w] = part
         return (bpp, i), x, y
 
+    # Number every page globally (8-bit pages first), pack 4-bit pages two pixels per byte (low nibble = left pixel),
+    # swizzle everything, and rewrite the pieces' page references.
     def finish(self):
         """-> (page blobs list [(bpp, bytes)], images with global page numbers)"""
         glob = {}

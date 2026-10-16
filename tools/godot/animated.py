@@ -7,6 +7,9 @@ def node_path(a):
     return a["name"] if parent in (None, ".") else parent + "/" + a["name"]
 
 
+# Which nodes do animations move? AnimationPlayer -> its libraries -> their animations -> each track's NodePath,
+# resolved against the player's root_node. The converter keeps these nodes separate, because static nodes can be
+# merged and pre-lit while animated ones can't.
 def animated_nodes(sc):
     """-> set of absolute node paths (relative to the scene root, like node_path) that some track targets"""
     libs = {}
@@ -35,6 +38,7 @@ def animated_nodes(sc):
     return out
 
 
+# Is path one of roots, or inside one of them?
 def is_under(path, roots):
     while path:
         if path in roots:

@@ -6,6 +6,10 @@ import struct
 import numpy as np
 from gm.gmtex import TexBuilder
 
+# Turn plain RGBA pictures into a VSPR section (the format src/vcpe_spr.c draws): each picture becomes an image with
+# one frame. The GameMaker converter's TexBuilder does the work (palette per image, pieces packed on 256x256 pages);
+# this function only writes the tables: images, frames, pieces, pages, palettes and page data, each 64-byte aligned,
+# then the header with their offsets.
 def build(images):
     class Empty:
         txtr=[]
@@ -15,6 +19,7 @@ def build(images):
     blobs,ims=b.finish();out=bytearray(64)
     def append(data,align=64):
         out.extend(b'\0'*(-len(out)%align));o=len(out);out.extend(data);return o
+    # Table rows in the exact binary layout of VcpeSprImage / VcpeSprFrame / VcpeSprPiece (src/vcpe_spr.h).
     imrows=[];frrows=[];pcrows=[];pal=bytearray()
     for im,(w,h) in zip(ims,metrics):
         pal.extend(b'\0'*(-len(pal)%64));po=len(pal);pal.extend(im['pal'])

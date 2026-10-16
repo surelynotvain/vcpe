@@ -1,15 +1,34 @@
 /* VCPE coroutines on PSP threads, strictly handed over one at a time (see vcpe_co.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * A coroutine is a function that can stop in the middle ("wait 2 seconds") and continue later from the same line. C
+ * has no such thing, so each coroutine runs on its own PSP thread, which keeps its place (its stack) while it sleeps.
+ * To keep the code as simple as single-threaded code, only one thread ever runs at a time:
+ *
+ * - every coroutine thread sleeps on its own semaphore, "wake";
+ * - vcpe_co_update (main thread) signals a coroutine's wake semaphore, then sleeps on "back";
+ * - the coroutine runs until it waits or ends, then signals "back" and sleeps on its "wake" again.
+ *
+ * So control passes back and forth like a baton, in a fixed slot order, and every run of the game executes the same
+ * steps in the same order, which keeps autotest recordings repeatable.
+ *
+ * Thread pool (4.0): creating and deleting a thread costs time, enough for a hitch in a cutscene. The threads of the
+ * first VCPE_CO_POOL slots therefore don't exit when their coroutine ends: they loop and sleep on "wake" until the
+ * slot is given a new coroutine. */
 #include <pspkernel.h>
 #include <pspthreadman.h>
 #include <string.h>
 #include "vcpe_co.h"
 
+/* At most 48 coroutines at once, each with a 32 KB stack. */
 #define MAX_CO 48
 #define CO_STACK (32 * 1024)
 #ifndef VCPE_CO_POOL
 #define VCPE_CO_POOL 8   /* 4.0: threads of the first slots stay parked after their coroutine ends, for reuse */
 #endif
 
+/* One slot. used = a coroutine owns it; done = its function returned (the slot is freed at the next update). */
 typedef struct {
     int used, done;
     SceUID thread, wake;       /* the coroutine sleeps on "wake" until the scheduler hands over; thread 0: none */
@@ -24,9 +43,13 @@ static SceUID back;           /* the scheduler sleeps on this until the running 
 static int current = -1;
 static double now;
 
+/* Ids combine the slot and a generation counter, so an id kept after its coroutine ended never refers to a newer
+ * coroutine that reuses the slot. */
 static int co_id(int i) { return (co[i].gen << 8) | i; }
 static int co_index(int id) { int i = id & 0xFF; return (i < MAX_CO && co[i].used && co[i].gen == (id >> 8)) ? i : -1; }
 
+/* Body of every coroutine thread: wait for the baton, run the function, mark the slot done, hand the baton back.
+ * Pooled threads then loop to wait for their next coroutine; the others exit and delete themselves. */
 static int entry(SceSize len, void *argp)
 {
     int i = *(int *)argp;
@@ -44,6 +67,8 @@ static int entry(SceSize len, void *argp)
     return 0;
 }
 
+/* Take the first free slot. If its thread is parked, just give it the new function (it is already waiting on "wake");
+ * otherwise create a semaphore and a thread. The coroutine first runs at the next vcpe_co_update. */
 int vcpe_co_start(VcpeCoFn fn, void *arg)
 {
     if (!back)
@@ -79,6 +104,8 @@ int vcpe_co_start(VcpeCoFn fn, void *arg)
 }
 
 /* a coroutine has ended: its slot is free; a pooled thread stays parked, any other has exited */
+/* Free a finished slot. Pooled slots keep their parked thread and semaphore; the rest delete the semaphore (their
+ * thread has exited). */
 static void release(int i)
 {
     if (i >= VCPE_CO_POOL) {
@@ -89,6 +116,7 @@ static void release(int i)
 }
 
 /* hand the CPU back to the scheduler and sleep until resumed */
+/* Inside a coroutine: give the baton back to the main thread and sleep until it is handed over again. */
 static void yield(void)
 {
     int me = current;
@@ -97,6 +125,7 @@ static void yield(void)
     sceKernelWaitSema(co[me].wake, 1, 0);
 }
 
+/* Continue after this many game seconds (game time advances by the dt given to vcpe_co_update). */
 void vcpe_co_wait(float seconds)
 {
     if (current < 0)
@@ -113,6 +142,7 @@ void vcpe_co_wait_frame(void)
     yield();
 }
 
+/* Wait until another coroutine has ended ("await" in other languages). */
 void vcpe_co_join(int id)
 {
     if (current < 0)
@@ -135,6 +165,8 @@ int vcpe_co_running(void)
     return n;
 }
 
+/* Main loop, once per update: advance game time, then hand the baton to each due coroutine in slot order. A coroutine
+ * started during this pass, in a later slot, runs in the same pass. */
 void vcpe_co_update(float dt)
 {
     now += dt;
@@ -158,6 +190,8 @@ void vcpe_co_update(float dt)
     }
 }
 
+/* End every coroutine at once (scene reload). A coroutine stopped mid-function can't be resumed, so its thread is
+ * killed; finished ones keep their parked thread. */
 void vcpe_co_reset(void)
 {
     for (int i = 0; i < MAX_CO; i++) {
@@ -175,6 +209,7 @@ void vcpe_co_reset(void)
     current = -1;
 }
 
+/* Also end the parked threads, giving their stacks back. */
 void vcpe_co_shutdown(void)
 {
     vcpe_co_reset();

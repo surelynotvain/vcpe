@@ -16,6 +16,8 @@ extern float vcpe_sin_tab[VCPE_SIN_N + 1];
 void vcpe_math_init(void);   /* fills the table; vcpe_sys_init calls it when the game links this module */
 
 /* sine of a turn fraction: t = 1 is a full circle */
+/* Table lookup: t (in turns) scaled to table steps; i = whole step (floored, also for negatives), f = fraction; the
+ * step index wraps with & (table size is a power of two); then interpolate linearly. */
 static inline float vcpe_sin_turn(float t)
 {
     float x = t * VCPE_SIN_N;
@@ -33,6 +35,8 @@ static inline float vcpe_cos(float r) { return vcpe_sin_turn(r * (0.5f / VCPE_PI
 static inline float vcpe_absf(float x) { return x < 0 ? -x : x; }
 
 /* atan2(y, x) in radians, -pi..pi */
+/* Polynomial atan on the ratio min/max (always 0..1, where the polynomial is accurate), then mirrored into the right
+ * octant by the signs and which of |x|, |y| is bigger. */
 static inline float vcpe_atan2(float y, float x)
 {
     float ax = vcpe_absf(x), ay = vcpe_absf(y);
@@ -52,6 +56,7 @@ static inline float vcpe_direction_deg(float x1, float y1, float x2, float y2)
     return d < 0 ? d + 360 : d;
 }
 
+/* On the PSP, the FPU's own square-root instruction (libm's sqrtf adds error checks). */
 static inline float vcpe_sqrt(float x)
 {
 #if defined(__psp__)
@@ -77,6 +82,7 @@ static inline float vcpe_approach(float v, float target, float step)
     return v < target ? (v + step > target ? target : v + step) : (v - step < target ? target : v - step);
 }
 /* a - b wrapped to -180..180 degrees */
+/* Shortest signed turn from b to a: remove whole turns, then fold into -180..180. */
 static inline float vcpe_angle_diff_deg(float a, float b)
 {
     float d = a - b;
@@ -89,6 +95,7 @@ static inline float vcpe_angle_diff_deg(float a, float b)
 /* ---------------------------------------------------------------- random numbers */
 typedef struct { uint32_t s; } VcpeRng;
 static inline void vcpe_rng_seed(VcpeRng *r, uint32_t seed) { r->s = seed ? seed : 0x9E3779B9u; }
+/* xorshift32: three shift-xor steps; full period of 2^32-1, never 0 (that is why a 0 seed is replaced). */
 static inline uint32_t vcpe_rng_u32(VcpeRng *r)
 {
     uint32_t x = r->s;
@@ -97,7 +104,9 @@ static inline uint32_t vcpe_rng_u32(VcpeRng *r)
     x ^= x << 5;
     return r->s = x;
 }
+/* Top 24 bits as a float fraction (a float has 24 bits of precision). */
 static inline float vcpe_rng_float(VcpeRng *r) { return (vcpe_rng_u32(r) >> 8) * (1.0f / 16777216.0f); }   /* [0, 1) */
+/* Range [0, n) by multiplying (64-bit) and keeping the top half: fair, and avoids the slow integer division of %. */
 static inline int vcpe_rng_int(VcpeRng *r, int n)                                                           /* [0, n) */
 {
     return n > 0 ? (int)(((uint64_t)vcpe_rng_u32(r) * (uint32_t)n) >> 32) : 0;

@@ -4,14 +4,15 @@
 #ifndef VCPE_H
 #define VCPE_H
 #define VCPE_VERSION_MAJOR 4
-#define VCPE_VERSION_MINOR 0
-#define VCPE_VERSION "4.0"
+#define VCPE_VERSION_MINOR 7
+#define VCPE_VERSION "4.7"
 #include "vcpe_sys.h"
 #include "vcpe_pak.h"
 #include "vcpe_audio.h"
 #include "vcpe_test.h"
 #include "vcpe_gfx.h"
 #include "vcpe_3d.h"
+#include "vcpe_lod.h"
 #include "vcpe_node3d.h"
 #include "vcpe_co.h"
 #include "vcpe_font.h"
@@ -25,7 +26,14 @@
 #include "vcpe_ttf.h"
 #include "vcpe_mouse.h"
 #include "vcpe_mem.h"
+#include "vcpe_adapt.h"
 #include "vcpe_load.h"
 #include "vcpe_data.h"
 #include "vcpe_tiles.h"
+#include "vcpe_ultra.h"
+#include "vcpe_jobs.h"
+#include "vcpe_pack.h"
+#include "vcpe_prefetch.h"
+#include "vcpe_diag.h"
+#include "vcpe_store.h"
 #endif

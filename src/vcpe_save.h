@@ -11,7 +11,13 @@
 int vcpe_save_read(const char *name, void *data, uint32_t size, uint32_t version);
 /* 0 written */
 int vcpe_save_write(const char *name, const void *data, uint32_t size, uint32_t version);
+/* Fixed-size saves: validation uses a 512-byte stack buffer; writing needs no payload-sized heap scratch,
+ * reading needs one payload-sized temporary to leave data untouched on failure. stdio may allocate internally. */
 void vcpe_save_erase(const char *name);
+/* 4.5: saves of varying size (e.g. compressed): read gives the size (at most cap); same two-slot safety */
+int vcpe_save_read_var(const char *name, void *data, uint32_t cap, uint32_t *size, uint32_t version);
+int vcpe_save_write_var(const char *name, const void *data, uint32_t size, uint32_t version);
+int vcpe_save_exists_var(const char *name, uint32_t version);
 uint32_t vcpe_crc32(const void *data, uint32_t n, uint32_t crc);   /* crc 0 to start */
 
 #endif

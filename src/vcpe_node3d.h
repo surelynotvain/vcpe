@@ -12,6 +12,9 @@ typedef struct { uint16_t page; uint32_t voff, nverts, ioff, nidx; } VcpeBatch;
 typedef struct { uint16_t first, n; float bound[4]; } VcpeMeshDef;   /* batches g_mbatches[first .. first+n); bounding sphere (local centre, radius) */
 enum { VCPE_TR_POS, VCPE_TR_ROT, VCPE_TR_SCALE, VCPE_TR_VISIBLE, VCPE_TR_FOV, VCPE_TR_METHOD, VCPE_TR_AUDIO, VCPE_TR_TRANSPARENCY };
 enum { VCPE_INTERP_NEAREST, VCPE_INTERP_LINEAR, VCPE_INTERP_CUBIC };
+#define VCPE_NODE_LOD 3
+typedef struct { uint32_t ioff, nidx; } VcpeLodRange;
+typedef struct { uint16_t first; uint8_t levels, pad; float err[VCPE_NODE_LOD]; } VcpeMeshLod;
 typedef struct { uint8_t kind, interp, discrete, pad; int16_t node; uint16_t nkeys; uint32_t first; } VcpeTrackDef;
 typedef struct { float t, trans, v[3]; } VcpeKeyDef;              /* method / audio keys: v[0] = method or sound id */
 typedef struct { uint32_t name; float length; uint8_t loop; uint16_t first, n; } VcpeClipDef;   /* tracks */
@@ -25,6 +28,10 @@ typedef struct {
     const VcpeClipDef *clips; const VcpeTrackDef *tracks; const VcpeKeyDef *keys;
     void (*on_method)(int player, int node, int method);   /* method track key reached (node: the track's target, or -1) */
     void (*on_audio)(int player, int sound, float from);   /* audio track key reached (from: start offset, s) */
+    /* 4.1, optional: LOD levels per mesh (tools/vcpe_lod.py), used after vcpe_node3d_lod(px). lods[mesh].levels
+     * coarser levels with their error (mesh units); the index range of batch k at level l (1-based) is
+     * lod_ranges[first + k * levels + l - 1], drawn over the batch's own vertices. 0 = no LOD. */
+    const VcpeMeshLod *lods; const VcpeLodRange *lod_ranges;
 } VcpeScene3D;
 
 void vcpe_node3d_load(const VcpeScene3D *s);
@@ -48,6 +55,7 @@ void vcpe_node3d_world(int node, float out[16]);     /* world matrix (after vcpe
 void vcpe_node3d_refresh(void);                 /* update changed transforms without advancing animation */
 void vcpe_node3d_update(float dt);                   /* advance the players, then the world matrices */
 void vcpe_node3d_draw(uint32_t cull_mask);           /* every visible mesh node on those layers (inside vcpe_3d) */
+void vcpe_node3d_lod(float px);                      /* 4.1: draw LOD levels whose error stays under px pixels; 0: off */
 
 int vcpe_anim_find(uint32_t player_name_hash);
 void vcpe_anim_play(int player, uint32_t clip_name_hash);   /* from the start, like AnimationPlayer.play() */

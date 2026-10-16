@@ -1,4 +1,16 @@
 /* VCPE loading screen (see vcpe_load.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * Loading normally blocks the main thread: while a 10 MB level is read, nothing draws and the screen freezes. This
+ * module draws frames *from inside* the load instead. Between vcpe_loading_begin and vcpe_loading_end it installs two
+ * hooks:
+ * - vcpe_pak_progress: the PAK reader calls it after every 256 KB chunk;
+ * - vcpe_step_hook: engine modules (and the game) report what they are doing, one line per step. Each hook calls
+ *   vcpe_loading_tick(), which draws a complete frame (begin, screen, end, present) if enough time passed since the
+ *   last one. So the screen animates as long as the load makes progress, with no extra thread.
+ *
+ * The screen appears only after show_after_us, so quick loads never flash a loading screen. */
 #include <pspkernel.h>
 #include <pspgu.h>
 #include <stdio.h>
@@ -12,15 +24,21 @@
 #include "vcpe_loadimg.h"   /* tools/mkloadimg.py: engineassets/wow.gif */
 
 static int show_after_us = 150000;
+/* Each redraw waits for a vblank (up to 16.7 ms), so redrawing less often lets the load finish sooner. */
 static int redraw_us = 50000;   /* 4.0: was 33 ms; each redraw waits for a vblank, so fewer redraws load faster */
 
 static int active, shown;
+void vcpe_adapt_loading(int active) __attribute__((weak));
+void vcpe_diag_loading(int active) __attribute__((weak));
+void vcpe_adapt_loading_tick(void) __attribute__((weak));
 static uint32_t total, done;
 static SceInt64 t_begin, t_last;
+static SceInt64 t_adapt;
 static void (*hook)(float progress, int ms);
 static const char *word = "LOADING";
 
 /* the boot log: the last steps reported (vcpe_step_*), newest at the bottom */
+/* The boot log: the last 15 steps, newest at the bottom; older lines scroll off the top. */
 #define LOG_LINES 15
 #define LOG_CHARS 58
 typedef struct { int id, status; char text[LOG_CHARS + 1]; } LogLine;
@@ -30,6 +48,7 @@ static int show_log = 1;
 
 void vcpe_loading_show_log(int on) { show_log = on; }
 
+/* In autotest runs, finished steps also go to stdout with their result, for test logs. */
 static void log_print(const LogLine *l)
 {
     static const char *tag[] = {"[ .... ]", "[  OK  ]", "[FAILED]", "[ INFO ]"};
@@ -37,6 +56,7 @@ static void log_print(const LogLine *l)
         printf("%s %s\n", tag[l->status], l->text);
 }
 
+/* A new step (text given) adds a line; a finished step (text 0) only updates the status of its line. */
 static void step_hook(int id, int status, const char *text)
 {
     if (text) {
@@ -63,6 +83,7 @@ static void step_hook(int id, int status, const char *text)
 
 /* what the engine is doing, one line per step ("Loading textures 3: 28 pages, 7196 KB"), top-left like a PC
  * booting. Plain text: the results only go to stdout in autotest runs */
+/* The log is drawn in the 8x8 HUD font, top-left, one line every 9 pixels. */
 void vcpe_loading_draw_log(int ms)
 {
     (void)ms;
@@ -78,6 +99,9 @@ void vcpe_loading_redraw_ms(int ms) { redraw_us = (ms < 16 ? 16 : ms) * 1000; }
 int vcpe_loading_shown(void) { return shown; }
 
 /* the engine's loading animation, size x size at (x, y), at ms into the loop */
+/* The animation: 24 frames of 8-bit indexed pixels sharing one palette (src/vcpe_loadimg.h, built from
+ * engineassets/wow.gif by tools/mkloadimg.py). Find the frame for this moment from the per-frame durations, then
+ * point the GE at that frame's texels; the palette load is skipped while the same frame is still bound. */
 void vcpe_loading_anim(float x, float y, float size, int ms)
 {
     static int loop_ms;
@@ -105,6 +129,7 @@ void vcpe_loading_anim(float x, float y, float size, int ms)
 
 /* the standard screen: the boot log top-left; the animation in the bottom-right corner with the word and the
  * progress bar just above it */
+/* The standard screen: log top-left, animation bottom-right, the word with 0-3 animated dots and the bar above it. */
 void vcpe_loading_draw_standard(float p, int ms)
 {
     const float m = 12, sz = VCPE_LOADIMG_SIZE;
@@ -123,6 +148,7 @@ void vcpe_loading_draw_standard(float p, int ms)
     }
 }
 
+/* One complete frame of the loading screen, shown immediately. */
 static void draw(SceInt64 now)
 {
     float p = total ? (float)done / (float)total : -1.0f;
@@ -138,11 +164,17 @@ static void draw(SceInt64 now)
     t_last = now;
 }
 
+/* Draw if one is due. Never inside a game frame: the display list is shared, and a load started mid-frame would
+ * otherwise begin a second frame inside the first. */
 void vcpe_loading_tick(void)
 {
     if (!active || vcpe_gfx_in_frame())
         return;
     SceInt64 now = sceKernelGetSystemTimeWide();
+    if (vcpe_adapt_loading_tick && now - t_adapt >= 50000) {
+        t_adapt = now;
+        vcpe_adapt_loading_tick();
+    }
     if (now - t_begin >= show_after_us && (!shown || now - t_last >= redraw_us))
         draw(now);
 }
@@ -159,18 +191,23 @@ void vcpe_loading_add(uint32_t bytes)
     vcpe_loading_tick();
 }
 
+/* Start: remember the expected bytes for the bar, clear the log and install the hooks. */
 void vcpe_loading_begin(uint32_t total_bytes)
 {
     active = 1;
+    if (vcpe_adapt_loading) vcpe_adapt_loading(1);
+    if (vcpe_diag_loading) vcpe_diag_loading(1);
     shown = 0;
     total = total_bytes;
     done = 0;
     t_begin = sceKernelGetSystemTimeWide();
+    t_adapt = t_begin;
     log_n = 0;
     vcpe_pak_progress = pak_progress;
     vcpe_step_hook = step_hook;
 }
 
+/* Finish: if the screen was shown, draw it once more in its final state (full bar), then remove the hooks. */
 void vcpe_loading_end(void)
 {
     if (!active)
@@ -184,4 +221,6 @@ void vcpe_loading_end(void)
     active = 0;
     vcpe_pak_progress = 0;
     vcpe_step_hook = 0;
+    if (vcpe_adapt_loading) vcpe_adapt_loading(0);
+    if (vcpe_diag_loading) vcpe_diag_loading(0);
 }

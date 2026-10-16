@@ -1,3 +1,7 @@
+/* VCPE Lua: a sandboxed Lua 5.1 VM for games whose original logic is in Lua. Two limits protect the game from a
+ * runaway script: a memory cap (every allocation goes through allocate(), which refuses to go over the limit) and an
+ * instruction cap (a hook every 10000 instructions raises an error once the budget for one call is spent). Errors
+ * never crash: they are caught and kept as text in vm->error. */
 #include "vcpe_lua.h"
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +10,7 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
+/* Lua's allocator: realloc with a byte budget, counting current and peak use. */
 static void *allocate(void *context, void *ptr, size_t old_size, size_t new_size)
 {
     VcpeLua *vm = context;
@@ -24,6 +29,7 @@ static void *allocate(void *context, void *ptr, size_t old_size, size_t new_size
     return next;
 }
 
+/* Called by Lua every 10000 instructions: count, and abort the script when it has run too long. */
 static void instruction_hook(lua_State *state, lua_Debug *debug)
 {
     void *context = NULL;
@@ -41,6 +47,7 @@ static int open_libraries(lua_State *state)
     return 0;
 }
 
+/* Create the VM with its memory cap and open the standard libraries. */
 int vcpe_lua_open(VcpeLua *vm, size_t memory_limit)
 {
     memset(vm, 0, sizeof(*vm));
@@ -79,6 +86,8 @@ void vcpe_lua_instruction_limit(VcpeLua *vm, unsigned limit)
     lua_sethook(vm->state, limit ? instruction_hook : NULL, limit ? LUA_MASKCOUNT : 0, 10000);
 }
 
+/* Call the function on the stack in protected mode (errors become a message, the stack is cleaned up), with a fresh
+ * instruction budget. */
 int vcpe_lua_call(VcpeLua *vm, int nargs, int nresults)
 {
     int base = lua_gettop(vm->state) - nargs - 1;
@@ -120,6 +129,8 @@ int vcpe_lua_string(VcpeLua *vm, const char *source, const char *name)
 
 const char *vcpe_lua_error(const VcpeLua *vm) { return vm->error; }
 
+/* Repeatable scripts: scripts that seed randomness from os.time() or os.clock() would differ every run. In autotest
+ * runs, these replacements return a fixed time and a clock advancing 1/60 s per call. */
 static double fixed_t, fixed_clock;
 static int fixed_time(lua_State *L) { lua_pushnumber(L, fixed_t); return 1; }
 static int fixed_clock_fn(lua_State *L) { fixed_clock += 1.0 / 60; lua_pushnumber(L, fixed_clock); return 1; }

@@ -101,6 +101,8 @@ def boolean(s, d=False):
     return d if s is None else s.strip() == 'true'
 
 
+# The 2D affine matrix used everywhere below. Products compose transforms: (parent * child) maps child space to the
+# parent's parent space.
 class Mat:
     """2D affine: x' = a x + c y + e, y' = b x + d y + f (Godot Transform2D columns)"""
 
@@ -241,6 +243,8 @@ class Scene2D:
         sc = vec2(p.get('scale'), (1.0, 1.0))
         return Mat.trs(pos, rot, sc), (0.0, 0.0)
 
+    # Compute every node's global transform, size, z order, visibility and colour: each is its parent's combined with
+    # its own (children inherit modulate and visibility; z adds up when z_as_relative).
     def resolve(self, nodes):
         """adds gm (global Mat), size, gz (global z), vis (visible), mod (modulate RGBA), order"""
         by = {}
@@ -265,6 +269,8 @@ class Scene2D:
         return nodes
 
     # ------------------------------------------------------------ drawing
+    # What a node draws, as images with the matrix that places each one (sprites with region/frames/flip/offset,
+    # texture rects, nine-patches, colour rects).
     def quads(self, n):
         """-> list of (PIL image, local Mat placing the image's pixel grid)"""
         p, t = n['props'], n['type']
@@ -350,6 +356,7 @@ class Scene2D:
                 out.append((im, Mat()))
         return out
 
+    # Draw the visible nodes in Godot's order (z, then tree order, with show_behind_parent) onto a float RGBA canvas.
     def render(self, nodes, size=(1920, 1080), root=None, exclude=(), view=None, only_types=None):
         """draw the visible nodes under root (a node path; None = all) into an RGBA image of `size`.
         view: a Mat applied after the global transforms (e.g. to move a part to the image centre)."""
@@ -389,6 +396,7 @@ CONTROL_TYPES = {'Control', 'TextureRect', 'TextureButton', 'NinePatchRect', 'Co
                  'TextureProgress', 'LineEdit', 'OptionButton', 'CheckBox', 'CheckButton', 'MenuButton'}
 
 
+# Nine-patch: the corners keep their size, the edges stretch along one axis, the centre along both.
 def ninepatch(img, w, h, l, t, r, b):
     w, h = max(1, w), max(1, h)
     out = Image.new('RGBA', (w, h), (0, 0, 0, 0))
@@ -403,6 +411,8 @@ def ninepatch(img, w, h, l, t, r, b):
     return out
 
 
+# Composite an image through a matrix: find its bounding box on the canvas, sample the image through the inverse
+# matrix (bilinear, premultiplied alpha so edges don't darken), then alpha-blend it over the canvas.
 def blit(canvas, img, m, mod):
     """alpha-composite img placed by Mat m (image pixel space -> canvas) with modulate colour mod;
     canvas: float32 HxWx4 straight RGBA in 0..1, changed in place"""

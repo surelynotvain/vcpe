@@ -1,4 +1,15 @@
 /* VCPE controller reading (see vcpe_pad.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * Games don't test PSP buttons directly: a bind table maps PSP buttons to the game's own bits (B_JUMP, B_OK...), so
+ * controls can be remapped in one place. Each update samples the pad once and derives:
+ * - held: buttons down now;
+ * - pressed: buttons that went down since the last time the game asked (kept until read, so a tap is never lost when
+ *   the game runs no update in a display frame);
+ * - released: buttons that were down at the previous update and are up now;
+ * - repeat: menu-style auto-repeat (first press, then every `rate` frames after `delay` frames held). In autotest
+ *   runs the buttons come from the test script instead of the pad, so runs are repeatable. */
 #include <pspctrl.h>
 #include <pspkernel.h>
 #include <stdio.h>
@@ -7,6 +18,8 @@
 #include "vcpe_input.h"
 #include "vcpe_pad.h"
 
+/* repeat_frames[i]: how many updates bit i has been held (0 = up). last_press: time of the last accepted press, for
+ * debouncing. */
 static const VcpePadBind *binds;
 static int nbinds, stick_mode = VCPE_STICK_DPAD, debounce_us;
 static VcpeInput edges;
@@ -14,6 +27,7 @@ static uint32_t psp_now, held_now, held_prev_update, stick_bits, repeat_frames[3
 static int sx, sy, sampling;
 static SceInt64 last_press[32];
 
+/* Sampling cycle 0 = sample at vblank; analog mode so the stick is read too. */
 void vcpe_pad_init(const VcpePadBind *b, int n, int mode)
 {
     binds = b;
@@ -27,6 +41,7 @@ void vcpe_pad_init(const VcpePadBind *b, int n, int mode)
 
 void vcpe_pad_debounce(int ms) { debounce_us = ms * 1000; }
 
+/* PSP button bits to game bits through the bind table (no table: PSP bits as they are). */
 static uint32_t map(uint32_t psp)
 {
     if (!binds)
@@ -38,6 +53,7 @@ static uint32_t map(uint32_t psp)
     return b;
 }
 
+/* Read the pad once per update and update every derived state. */
 uint32_t vcpe_pad_update(void)
 {
     uint32_t psp = 0;
@@ -52,14 +68,18 @@ uint32_t vcpe_pad_update(void)
         SceCtrlData pad;
         sceCtrlPeekBufferPositive(&pad, 1);
         psp = pad.Buttons;
+        /* The stick reads 0..255 per axis with 128 at rest; centre it to -128..127. */
         sx = pad.Lx - 128;
         sy = pad.Ly - 128;
+        /* Stick as d-pad, plain: past about 60% of the way out counts as a press. */
         if (stick_mode == VCPE_STICK_DPAD) {
             stick_bits = 0;
             if (pad.Lx < 50) stick_bits |= PSP_CTRL_LEFT;
             if (pad.Lx > 205) stick_bits |= PSP_CTRL_RIGHT;
             if (pad.Ly < 50) stick_bits |= PSP_CTRL_UP;
             if (pad.Ly > 205) stick_bits |= PSP_CTRL_DOWN;
+        /* With hysteresis: a direction engages far out (96) and only lets go near the centre (40), so a stick resting
+         * near the threshold doesn't flicker on and off. */
         } else if (stick_mode == VCPE_STICK_DPAD_HYST) {
             /* engages far out, lets go near the centre */
             if (sy < -96) stick_bits |= PSP_CTRL_UP; else if (sy > -40) stick_bits &= ~PSP_CTRL_UP;
@@ -74,6 +94,7 @@ uint32_t vcpe_pad_update(void)
     psp_now = psp;
     uint32_t held = map(psp);
     uint32_t newly = held & ~edges.previous;
+    /* Anti-mash debounce: a new press of the same button within debounce_us of the last accepted one is ignored. */
     if (debounce_us && newly) {
         SceInt64 now = sceKernelGetSystemTimeWide();
         for (int i = 0; i < 32; i++)
@@ -98,6 +119,7 @@ uint32_t vcpe_pad_released(void) { return held_prev_update & ~held_now; }
 uint32_t vcpe_pad_psp(void) { return psp_now; }
 void vcpe_pad_stick(int *x, int *y) { if (x) *x = sx; if (y) *y = sy; }
 
+/* Auto-repeat: fires on the first frame held, then after `delay` frames, every `rate` frames. */
 uint32_t vcpe_pad_repeat(uint32_t bits, int delay, int rate)
 {
     uint32_t r = 0;
@@ -112,6 +134,7 @@ uint32_t vcpe_pad_repeat(uint32_t bits, int delay, int rate)
     return r;
 }
 
+/* Autotest script names to PSP bits; "cross+circle" is a chord. */
 unsigned vcpe_pad_button(const char *name)
 {
     static const struct { const char *n; unsigned b; } m[] = {

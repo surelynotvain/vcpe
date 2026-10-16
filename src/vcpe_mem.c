@@ -1,12 +1,25 @@
 /* VCPE memory for the 32 MB PSP-1000 (see vcpe_mem.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * The PSP-1000 has 32 MB of RAM, the later models 64 MB. A homebrew game gets roughly 20 MB of heap on the first and
+ * 50 MB on the others. Measuring the largest block malloc can give (vcpe_heap_kb) tells them apart.
+ *
+ * Every model also has a 4 MB "volatile" partition the system lends to the running game. It is locked once here and
+ * kept. Its contents may not survive sleep, so only data that can be read again from the PAK should live there.
+ *
+ * The arena and the report at the bottom are tools against fragmentation: when blocks of different sizes are freed
+ * and allocated level after level, the free memory ends up in pieces too small for the next big block. */
 #include <pspkernel.h>
 #include <pspsuspend.h>
+#include <pspsysmem.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "vcpe_sys.h"
 #include "vcpe_mem.h"
 
+/* Measured once and remembered: later measurements would see the game's own allocations. */
 int vcpe_mem_32mb(void)
 {
     static int small = -1;
@@ -15,6 +28,7 @@ int vcpe_mem_32mb(void)
     return small;
 }
 
+/* Lock the volatile partition on the first call (TryLock: fails instead of waiting if someone else has it). */
 uint8_t *vcpe_volatile_mem(uint32_t *size)
 {
     static int tried;
@@ -34,6 +48,7 @@ uint8_t *vcpe_volatile_mem(uint32_t *size)
     return (uint8_t *)mem;
 }
 
+/* mallinfo().uordblks = bytes currently allocated from the heap; the peak is tracked on every query. */
 static int peak;
 int vcpe_mem_used_kb(void)
 {
@@ -51,7 +66,14 @@ int vcpe_mem_peak_kb(void)
 
 /* ------------------------------------------------------------------ 4.0 */
 int vcpe_mem_largest_free_kb(void) { return vcpe_heap_kb(); }
+int vcpe_mem_available_kb(void)
+{
+    struct mallinfo mi = mallinfo();
+    return (int)(((uint32_t)sceKernelTotalFreeMemSize() + (uint32_t)mi.fordblks) / 1024);
+}
 
+/* An arena hands out memory by moving a pointer forward; nothing is freed one by one, the whole arena is reset at
+ * once. */
 int vcpe_arena_init(VcpeArena *a, void *mem, uint32_t size)
 {
     a->own = 0;
@@ -63,13 +85,19 @@ int vcpe_arena_init(VcpeArena *a, void *mem, uint32_t size)
     return mem ? 0 : -1;
 }
 
+/* Align the actual address, including when the caller supplies an unaligned block. Check with subtraction so
+ * neither cursor rounding nor size addition can wrap around on the PSP's 32-bit pointers. */
 void *vcpe_arena_alloc(VcpeArena *a, uint32_t size, uint32_t align)
 {
     if (align < 4)
         align = 4;
-    uint32_t at = (a->used + align - 1) & ~(align - 1);
-    if (!a->base || at + size > a->size || at + size < at)
+    if (!a->base || (align & (align - 1)) || a->used > a->size)
         return 0;
+    uintptr_t addr = (uintptr_t)a->base + a->used;
+    uint32_t pad = (uint32_t)(-addr & (uintptr_t)(align - 1));
+    if (pad > a->size - a->used || size > a->size - a->used - pad)
+        return 0;
+    uint32_t at = a->used + pad;
     a->used = at + size;
     if (a->used > a->peak)
         a->peak = a->used;
@@ -84,11 +112,15 @@ void vcpe_arena_free_all(VcpeArena *a)
 }
 
 /* modules a game may not link: weak, read only when present */
+/* Weak references: the report reads these only if the game links the module that defines them. The address of a
+ * missing weak symbol is 0, which is what the &name checks below test. */
 extern int vcpe_spr_loads __attribute__((weak)), vcpe_spr_fails __attribute__((weak));
 int vcpe_spr_resident_kb(void) __attribute__((weak));
 extern int vcpe_stat_reload_fail __attribute__((weak)), vcpe_stat_dlist_peak_kb __attribute__((weak));
 extern int vcpe_stat_dlist_full __attribute__((weak));
 
+/* One line describing memory: in use, peak, largest free block, free memory inside the heap ("holes": free but
+ * possibly fragmented), then the sprite cache, display list and failed reloads when those modules are linked. */
 int vcpe_mem_report(char *out, int n, const char *tag)
 {
     struct mallinfo mi = mallinfo();

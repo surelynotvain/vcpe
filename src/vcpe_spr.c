@@ -1,4 +1,22 @@
 /* VCPE sprites: per-image palettes on cached 256x256 pages, GameMaker-style draws and bitmap-font text. */
+
+/* HOW THIS FILE WORKS
+ *
+ * Sprites come from a "VSPR" section of the game's PAK, written by the converter. Its tables:
+ * - images: one per sprite (size, origin, frame count, bit depth, palette offset);
+ * - frames: each frame is a list of pieces;
+ * - pieces: rectangles cut from 256x256 texture pages (one sprite frame may be split over several pages, and one page
+ *   holds pieces of many sprites);
+ * - pages: the 256x256 textures, 4-bit (32 KB) or 8-bit (64 KB) indexed, swizzled;
+ * - fonts and glyphs: GameMaker-style sprite fonts, each glyph a rectangle of a font image;
+ * - a palette blob: every image has its own palette, so two sprites on one page can use different colours.
+ *
+ * The small tables are read at init and stay in RAM. Pages are big, so they are loaded on first use and kept in a
+ * cache with a memory budget; when the budget is full, the page drawn longest ago is dropped (LRU = least recently
+ * used). A page drawn in the current frame is never dropped, because the GE may still read it.
+ *
+ * Drawing follows GameMaker's rules (origin, negative scale = mirror, angle in degrees counter-clockwise), so code
+ * converted from GameMaker games keeps its numbers. */
 #include <pspgu.h>
 #include <pspkernel.h>
 #include <malloc.h>
@@ -8,6 +26,7 @@
 #include "vcpe_gfx.h"
 #include "vcpe_spr.h"
 
+/* Every sprite page is 256x256 texels. */
 #define PAGE 256
 
 static VcpeSprHeader hdr;
@@ -18,28 +37,38 @@ static VcpeSprPage *page_tab;
 static VcpeSprFont *fonts;
 static VcpeSprGlyph *glyphs;
 static uint8_t *pal_blob;
+/* page_mem[p]: page p in RAM, or 0 when not loaded. */
 static uint8_t **page_mem;
 static uint32_t *page_used;         /* frame clock of the last draw */
+/* A doubly linked list through the resident pages, most recently drawn at the head. Dropping the least recently used
+ * page is then just "take the tail", instead of scanning every page. */
 static int32_t *lru_prev, *lru_next; /* resident pages, most recently drawn first (4.0: O(1) eviction) */
 static int lru_head = -1, lru_tail = -1;
 static uint32_t base_off, budget, resident;
+/* The frame clock (vcpe_spr_frame_begin): pages remember the clock of their last draw in page_used. */
 static uint32_t clock_ = 1;
 static int all_loaded;            /* vcpe_spr_load_all: every page is resident, nothing is evicted */
 static uint8_t *all_mem;          /* its single block, when it got one */
+/* Optional arena (vcpe_spr_arena): one block cut into equal slots, each big enough for any page. Loading and dropping
+ * pages then never touches the heap; slot_free is a stack of the free slot numbers. */
 static uint8_t *arena, *arena_own;  /* vcpe_spr_arena: fixed slots instead of malloc per page */
 static uint32_t slot_bytes, nslots;
 static int32_t *slot_free;        /* stack of free slot indices */
 static int nfree;
 static float view_x, view_y;
 static int additive, flash;
+/* What this module last bound on the GE. bound_epoch is compared with vcpe_bind_epoch: if another module bound
+ * something since, our cached page/palette is no longer on the GE. */
 static int bound_page = -1, bound_epoch = -1;
 static const void *bound_clut;
 static const void *clut_override;
 int vcpe_spr_loads, vcpe_spr_fails;
+/* Fast glyph lookup: for each font, the glyph index of every ASCII character (-1 = none). */
 static int16_t (*ascii)[128];   /* per font: glyph index of each ASCII code (-1 none), built once */
 /* sin of degrees from a 1024-step table (rotated sprites: libm trig is slow on the PSP's FPU), built at init */
 static float sin_tab[1025];
 
+/* Read one table of the section into its own allocation. */
 static void *read_table(uint32_t off, uint32_t size)
 {
     if (!size)
@@ -52,6 +81,7 @@ static void *read_table(uint32_t off, uint32_t size)
     return p;
 }
 
+/* Undo a failed init completely, so every later call sees zero images and does nothing. */
 static void free_tables(void)
 {
     free(images); free(frames); free(pieces); free(page_tab); free(fonts); free(glyphs); free(pal_blob);
@@ -61,10 +91,13 @@ static void free_tables(void)
     hdr.nimages = hdr.nfonts = hdr.npages = 0;
 }
 
+/* Read the section header and all small tables. budget_bytes is how much page memory the cache may hold. */
 int vcpe_spr_init(uint32_t section_off, uint32_t budget_bytes)
 {
     base_off = section_off;
     budget = budget_bytes;
+    /* The rotation table is built here, once, instead of on the first rotated draw (1025 sinf calls would be a
+     * visible hitch mid-game). */
     if (sin_tab[256] == 0)
         for (int i = 0; i <= 1024; i++)
             sin_tab[i] = sinf(i * (2 * (float)M_PI / 1024));
@@ -80,6 +113,7 @@ int vcpe_spr_init(uint32_t section_off, uint32_t budget_bytes)
     glyphs = read_table(hdr.glyphs, hdr.nglyphs * sizeof *glyphs);
     pal_blob = read_table(hdr.pal, hdr.pal_size);
     page_mem = calloc(hdr.npages, sizeof *page_mem);
+    /* Build the ASCII fast path for every font: one array lookup instead of a binary search per character. */
     if (hdr.nfonts && fonts && glyphs && (ascii = malloc(hdr.nfonts * sizeof *ascii)) != 0)
         for (uint32_t f = 0; f < hdr.nfonts; f++) {
             for (int c = 0; c < 128; c++)
@@ -96,12 +130,14 @@ int vcpe_spr_init(uint32_t section_off, uint32_t budget_bytes)
         return -2;
     }
     lru_head = lru_tail = -1;
+    /* Palettes are read by the GE straight from RAM: flush the CPU's data cache so the GE sees them. */
     sceKernelDcacheWritebackAll();
     return 0;
 }
 
 int vcpe_spr_count(void) { return (int)hdr.nimages; }
 
+/* An image's palette: 16 entries for 4-bit images, 256 for 8-bit. */
 const uint32_t *vcpe_spr_clut(int img, int *count)
 {
     const VcpeSprImage *im = vcpe_spr_image(img);
@@ -112,6 +148,7 @@ const uint32_t *vcpe_spr_clut(int img, int *count)
     return (const uint32_t *)(pal_blob + im->pal);
 }
 
+/* Palette swap for the next draws (team colours, damage flashes); 0 goes back to the image's own palette. */
 void vcpe_spr_clut_override(const uint32_t *clut) { clut_override = clut; }
 const VcpeSprImage *vcpe_spr_image(int img) { return img >= 0 && img < (int)hdr.nimages ? &images[img] : 0; }
 int vcpe_spr_resident_kb(void) { return (int)(resident >> 10); }
@@ -119,20 +156,24 @@ void vcpe_spr_view(float x, float y) { view_x = x; view_y = y; }
 void vcpe_spr_additive(int on) { additive = on; }
 void vcpe_spr_flash(int on) { flash = on; }
 
+/* Called once per frame: advances the clock that marks pages as "drawn this frame". */
 void vcpe_spr_frame_begin(void)
 {
     clock_++;
 }
 
+/* A 4-bit page packs two texels per byte: 32 KB; an 8-bit page is 64 KB. */
 static uint32_t page_bytes(int p) { return page_tab[p].bpp == 4 ? PAGE * PAGE / 2 : PAGE * PAGE; }
 
 /* ------------------------------------------------------------------ LRU list of resident pages */
+/* Remove page p from the LRU list (fix its neighbours' links, or the head/tail). */
 static void lru_unlink(int p)
 {
     if (lru_prev[p] >= 0) lru_next[lru_prev[p]] = lru_next[p]; else lru_head = lru_next[p];
     if (lru_next[p] >= 0) lru_prev[lru_next[p]] = lru_prev[p]; else lru_tail = lru_prev[p];
 }
 
+/* Put page p at the head of the LRU list: it was just drawn. */
 static void lru_front(int p)
 {
     lru_prev[p] = -1;
@@ -141,6 +182,7 @@ static void lru_front(int p)
     lru_head = p;
 }
 
+/* Drop a resident page: give its slot back to the arena, or free its heap block. */
 static void page_drop(int p)
 {
     lru_unlink(p);
@@ -154,7 +196,26 @@ static void page_drop(int p)
         bound_page = -1;
 }
 
+uint32_t vcpe_spr_trim(uint32_t bytes, int max_pages, uint32_t idle_frames)
+{
+    if (!bytes || max_pages <= 0 || !page_mem || arena || all_mem || all_loaded || vcpe_gfx_in_frame()) return 0;
+    uint32_t freed = 0;
+    int waited = 0;
+    while (freed < bytes && max_pages-- > 0) {
+        int p = lru_tail;
+        if (p < 0 || page_used[p] == clock_ || clock_ - page_used[p] < idle_frames) break;
+        if (!waited) { vcpe_gfx_flush(); vcpe_gfx_gpu_wait(); waited = 1; }
+        uint32_t n = page_bytes(p);
+        page_drop(p);
+        freed += n;
+    }
+    return freed;
+}
+
 /* make room: drop the least recently drawn pages, never one drawn this frame (the GE may read it) */
+/* Drop least-recently-drawn pages until a page of `need` bytes fits the budget (or, with an arena, until a slot is
+ * free). Before freeing anything, wait once for the GE: with pipelining the previous frame may still be reading these
+ * pages. */
 static void evict_for(uint32_t need)
 {
     if (all_loaded)
@@ -173,6 +234,7 @@ static void evict_for(uint32_t need)
     }
 }
 
+/* Read page p from the PAK into a fresh heap block or a free arena slot. */
 static uint8_t *page_read(int p, uint32_t n)
 {
     uint32_t off = base_off + hdr.page_data + page_tab[p].off;
@@ -188,6 +250,8 @@ static uint8_t *page_read(int p, uint32_t n)
     return mem;
 }
 
+/* Return page p, loading it if needed. A miss costs a PAK read in the middle of the frame (a small hitch), which is
+ * why games preload pages behind loading screens (vcpe_spr_preload / vcpe_spr_load_all). */
 static uint8_t *page_get(int p)
 {
     if (!page_mem[p]) {
@@ -195,6 +259,8 @@ static uint8_t *page_get(int p)
         evict_for(n);
         page_mem[p] = page_read(p, n);
         if (!page_mem[p]) {
+            /* The heap could not give the block even within budget (fragmentation, or the game used the memory): drop
+             * every page not drawn this frame and try once more. */
             /* out of memory: drop everything not drawn this frame and try once more */
             uint32_t keep = budget;
             budget = 0;
@@ -210,6 +276,7 @@ static uint8_t *page_get(int p)
         vcpe_spr_loads++;
         vcpe_tex_uploaded();
         lru_front(p);
+    /* Already resident: move it to the head the first time it is drawn this frame (once per frame is enough). */
     } else if (page_used[p] != clock_ && lru_head != p) {
         lru_unlink(p);
         lru_front(p);
@@ -218,6 +285,8 @@ static uint8_t *page_get(int p)
     return page_mem[p];
 }
 
+/* Switch the page cache to fixed slots in one block. Every resident page is dropped first, since pages move from heap
+ * blocks to slots. size 0 switches back to heap blocks. */
 int vcpe_spr_arena(void *mem, uint32_t size)
 {
     if (all_loaded || !page_tab)
@@ -253,6 +322,9 @@ int vcpe_spr_arena(void *mem, uint32_t size)
     return (int)n;
 }
 
+/* Load every page at once (games whose sprites fit in memory): no loads or evictions ever happen while playing. Pages
+ * are stored back to back in the PAK, so one big read fills one big block; if no block that large is free, each page
+ * gets its own allocation instead. */
 int vcpe_spr_load_all(void (*progress)(int done, int total))
 {
     if (all_loaded)
@@ -318,6 +390,7 @@ int vcpe_spr_load_all(void (*progress)(int done, int total))
     return 0;
 }
 
+/* Load every page an image uses now (e.g. behind a loading screen), so drawing it later never stalls. */
 void vcpe_spr_preload(int img)
 {
     const VcpeSprImage *im = vcpe_spr_image(img);
@@ -331,6 +404,8 @@ void vcpe_spr_preload(int img)
 }
 
 /* bind the page and the image palette; 0 when the page can't be loaded */
+/* Make page p and the image's palette current on the GE, sending only what changed. The batch is flushed first,
+ * because batched quads were meant for the old page/palette. */
 static int bind(const VcpeSprImage *im, int p)
 {
     uint8_t *mem = page_get(p);
@@ -360,11 +435,14 @@ static int bind(const VcpeSprImage *im, int p)
         bound_page = p;
         vcpe_stat_binds++;
     }
+    /* We changed the GE's texture behind vcpe_gfx's back: tell it, so its own cached page is rebound next time.
+     * Remember the epoch to detect when someone else binds over us. */
     vcpe_unbind();   /* the engine's own page cache no longer matches the GE */
     bound_epoch = vcpe_bind_epoch;
     return 1;
 }
 
+/* Frame index wraps like GameMaker's image_index: -1 is the last frame, nframes is frame 0 again. */
 static const VcpeSprFrame *get_frame(const VcpeSprImage *im, int frame)
 {
     if (!im || !im->nframes)
@@ -375,14 +453,19 @@ static const VcpeSprFrame *get_frame(const VcpeSprImage *im, int frame)
     return &frames[im->first_frame + frame];
 }
 
+/* Render state every sprite draw needs: blend mode, flash (silhouette) mode, nearest filtering for pixel art. */
+static int nearest = 1;
+void vcpe_spr_filter(int near) { nearest = near; }
 static void prep(void)
 {
     vcpe_blend(additive);
     vcpe_tex_white(flash);
-    vcpe_filter(1);
+    vcpe_filter(nearest);
 }
 
 /* one textured quad given 4 screen corners (TL, TR, BL, BR) */
+/* A rotated rectangle can't be a GU_SPRITES pair (those are axis-aligned), so it is drawn as a 4-vertex triangle
+ * strip in the order top-left, top-right, bottom-left, bottom-right. */
 static void quad4(const float *xy, float u0, float v0, float u1, float v1, uint32_t color)
 {
     vcpe_gfx_flush();
@@ -403,6 +486,8 @@ static void quad4(const float *xy, float u0, float v0, float u1, float v1, uint3
 }
 
 /* draw the part [l, l+w) x [t, t+h) of a frame (frame pixels); the frame point (px, py) lands on screen (sx, sy) */
+/* sin(degrees) from the 1024-step table with linear interpolation between steps (accurate to ~1e-5, many times faster
+ * than sinf on the PSP's FPU). Table index i covers angle i * 360/1024. */
 static float tab_sin(float deg)
 {
     float t = deg * (1024 / 360.0f);
@@ -414,6 +499,9 @@ static float tab_sin(float deg)
     return sin_tab[i] + (sin_tab[i + 1] - sin_tab[i]) * f;
 }
 
+/* The core draw: the part [l, l+w) x [t, t+h) of a frame, with frame point (px, py) placed at screen (sx, sy), scaled
+ * by xs/ys and rotated by angle. Each piece of the frame that overlaps the requested part is clipped to it and drawn
+ * as one quad from its page. */
 static void draw_rect(const VcpeSprImage *im, const VcpeSprFrame *fr, int l, int t, int w, int h, float px, float py,
                       float sx, float sy, float xs, float ys, float angle, uint32_t color)
 {
@@ -426,14 +514,17 @@ static void draw_rect(const VcpeSprImage *im, const VcpeSprFrame *fr, int l, int
     prep();
     for (int i = 0; i < fr->npieces; i++) {
         const VcpeSprPiece *pc = &pieces[fr->first_piece + i];
+        /* Clip the piece (frame-space rectangle dx,dy,w,h) to the requested part. */
         int x0 = pc->dx > l ? pc->dx : l, y0 = pc->dy > t ? pc->dy : t;
         int x1 = pc->dx + pc->w < l + w ? pc->dx + pc->w : l + w;
         int y1 = pc->dy + pc->h < t + h ? pc->dy + pc->h : t + h;
         if (x1 <= x0 || y1 <= y0)
             continue;
+        /* Texture coordinates of the clipped piece on its page, then its corners relative to the pivot, scaled. */
         float u0 = pc->u + (x0 - pc->dx), v0 = pc->v + (y0 - pc->dy);
         float u1 = u0 + (x1 - x0), v1 = v0 + (y1 - y0);
         float lx0 = (x0 - px) * xs, ly0 = (y0 - py) * ys, lx1 = (x1 - px) * xs, ly1 = (y1 - py) * ys;
+        /* No rotation: an axis-aligned quad, culled if it is off screen, before the page is even loaded. */
         if (!rot) {
             float qx0 = sx + lx0, qx1 = sx + lx1, qy0 = sy + ly0, qy1 = sy + ly1;
             float mnx = qx0 < qx1 ? qx0 : qx1, mxx = qx0 < qx1 ? qx1 : qx0;
@@ -443,6 +534,9 @@ static void draw_rect(const VcpeSprImage *im, const VcpeSprFrame *fr, int l, int
             if (!bind(im, pc->page))
                 continue;
             vcpe_quad(qx0, qy0, qx1, qy1, u0, v0, u1, v1, color);
+        /* Rotation: rotate the 4 corners around the pivot (GameMaker's direction: counter-clockwise on a y-down
+         * screen). The cull test is loose (64 px margin) because a corner may be off screen while the quad still
+         * crosses it. */
         } else {
             float xy[8];
             float lx[4] = { lx0, lx1, lx0, lx1 }, ly[4] = { ly0, ly0, ly1, ly1 };
@@ -464,6 +558,8 @@ static void draw_rect(const VcpeSprImage *im, const VcpeSprFrame *fr, int l, int
     }
 }
 
+/* Draw a whole frame at room position (x, y) (the view offset is subtracted). The quick reject uses a radius that
+ * covers any rotation. Unrotated sprites snap to whole pixels so pixel art stays crisp. */
 void vcpe_spr_draw(int img, int frame, float x, float y, float xs, float ys, float angle, uint32_t color)
 {
     const VcpeSprImage *im = vcpe_spr_image(img);
@@ -483,6 +579,7 @@ void vcpe_spr_draw(int img, int frame, float x, float y, float xs, float ys, flo
     draw_rect(im, fr, 0, 0, im->w, im->h, im->ox, im->oy, sx, sy, xs, ys, angle, color);
 }
 
+/* Draw a sub-rectangle of a frame (GameMaker draw_sprite_part), its top-left corner at (x, y). */
 void vcpe_spr_draw_part(int img, int frame, int left, int top, int w, int h, float x, float y, float xs, float ys,
                         uint32_t color)
 {
@@ -496,6 +593,8 @@ void vcpe_spr_draw_part(int img, int frame, int left, int top, int w, int h, flo
     draw_rect(im, fr, left, top, w, h, left, top, sx, sy, xs, ys, 0, color);
 }
 
+/* Repeat an image to cover the screen (backgrounds). Work out the first copy left of / above the screen edge, then
+ * how many copies cover the screen, and draw each one. */
 void vcpe_spr_draw_tiled(int img, int frame, float x, float y, int tile_x, int tile_y, float xs, float ys,
                          uint32_t color)
 {
@@ -520,6 +619,7 @@ void vcpe_spr_draw_tiled(int img, int frame, float x, float y, int tile_x, int t
                           0, color);
 }
 
+/* Bounding box of the pixels a frame really draws (the union of its pieces). */
 int vcpe_spr_frame_box(int img, int frame, int *x0, int *y0, int *x1, int *y1)
 {
     const VcpeSprImage *im = vcpe_spr_image(img);
@@ -541,6 +641,8 @@ int vcpe_spr_frame_box(int img, int frame, int *x0, int *y0, int *x1, int *y1)
 /* ------------------------------------------------------------------ text */
 const VcpeSprFont *vcpe_spr_font(int f) { return f >= 0 && f < (int)hdr.nfonts ? &fonts[f] : 0; }
 
+/* Find a character's glyph: ASCII through the fast table, anything else by binary search (glyphs are sorted by
+ * character code). */
 static const VcpeSprGlyph *glyph(const VcpeSprFont *f, unsigned ch)
 {
     if (ch < 128 && ascii) {
@@ -561,6 +663,7 @@ static const VcpeSprGlyph *glyph(const VcpeSprFont *f, unsigned ch)
     return 0;
 }
 
+/* GameMaker text rules: '\n', '\r\n' and '#' all start a new line ('\#' prints a real '#'). */
 static int line_break(const char *s, int *skip)
 {
     if (s[0] == '\n') { *skip = 1; return 1; }
@@ -569,6 +672,7 @@ static int line_break(const char *s, int *skip)
     return 0;
 }
 
+/* Width of one line in font pixels (sum of glyph advances); *end is where the line stops. */
 static float line_width(const VcpeSprFont *f, const char *s, const char **end)
 {
     float w = 0;
@@ -588,6 +692,7 @@ static float line_width(const VcpeSprFont *f, const char *s, const char **end)
     return w;
 }
 
+/* The widest line, scaled. */
 float vcpe_spr_text_width(int font, const char *s, float scale)
 {
     const VcpeSprFont *f = vcpe_spr_font(font);
@@ -607,6 +712,7 @@ float vcpe_spr_text_width(int font, const char *s, float scale)
     return best * scale;
 }
 
+/* Number of lines times the font's line height, scaled. */
 float vcpe_spr_text_height(int font, const char *s, float scale)
 {
     const VcpeSprFont *f = vcpe_spr_font(font);
@@ -621,6 +727,8 @@ float vcpe_spr_text_height(int font, const char *s, float scale)
     return n * f->height * scale;
 }
 
+/* Draw text with alignment: halign 0/1/2 = left/centre/right of x, valign 0/1/2 = top/middle/bottom of y. Each line
+ * is aligned separately; positions are floored to whole pixels so glyphs stay crisp. */
 void vcpe_spr_text(int font, float x, float y, const char *s, int halign, int valign, float scale, uint32_t color)
 {
     const VcpeSprFont *f = vcpe_spr_font(font);
@@ -660,6 +768,7 @@ void vcpe_spr_text(int font, float x, float y, const char *s, int halign, int va
     }
 }
 
+/* Rotated version of draw_part, rotating around the centre of the part. */
 void vcpe_spr_draw_part_ex(int img,int frame,int left,int top,int w,int h,float x,float y,float xs,float ys,float angle,uint32_t color)
 {
  const VcpeSprImage *im=vcpe_spr_image(img);

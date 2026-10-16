@@ -15,6 +15,7 @@ DELAY = 1024        # fact delay / first sample offset
 TAIL = 368
 
 
+# Split a RIFF file into its chunks: 4-byte id, 4-byte size, data, padded to an even length.
 def chunks(b):
     pos, out = 12, {}
     while pos + 8 <= len(b):
@@ -24,6 +25,8 @@ def chunks(b):
     return out
 
 
+# Rebuild the file with the chunks the XMB expects, in order: fmt, fact (sample count, clamped so it never promises
+# more audio than the frames hold, and the decoder delay), smpl (one loop over the whole sound), data.
 def main(src, pcm_samples, dst):
     c = chunks(open(src, "rb").read())
     fmt, data = c[b"fmt "], c[b"data"]

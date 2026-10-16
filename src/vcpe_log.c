@@ -1,4 +1,8 @@
 /* VCPE log file (see vcpe_log.h). */
+
+/* A text log next to the EBOOT, for test builds and bug reports. By default every line is flushed to the memory stick
+ * at once, so the log survives a crash; vcpe_log_buffered(1) skips that (much faster when logging a lot, but the last
+ * lines may be lost in a crash). */
 #include <stdarg.h>
 #include <stdio.h>
 #include "vcpe_sys.h"

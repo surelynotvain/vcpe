@@ -1,4 +1,13 @@
 /* VCPE data PAK: one big read-only file, read by offset; survives sleep/resume and slow memory sticks. */
+
+/* HOW THIS FILE WORKS
+ *
+ * A game keeps all its data in one big file (the PAK) and reads pieces by offset. Two PSP problems are handled here:
+ * - After the console sleeps and wakes, open file handles go stale and reads fail. vcpe_sys counts resumes in
+ *   vcpe_resume_gen; when it changed, the file is reopened before reading.
+ * - Memory sticks can be slow to wake or fail a read. A failed read is retried up to 50 times, 0.1 s apart (5 s),
+ *   reopening the file each time. The file position is tracked, so consecutive reads (the common case while loading)
+ *   skip the seek system call. */
 #include <pspkernel.h>
 #include <pspiofilemgr.h>
 #include <malloc.h>
@@ -6,13 +15,17 @@
 #include <string.h>
 #include "vcpe_sys.h"
 #include "vcpe_pak.h"
+#include "vcpe_observe.h"
 
+/* Set by the loading screen; called after every chunk so it can redraw. */
 void (*vcpe_pak_progress)(uint32_t bytes);
 static int pak_fd = -1;
 static char pak_path[300];
 static int pak_gen;
+/* -1 = unknown (after opening, a failed read or a seek elsewhere): the next read seeks. */
 static int64_t pak_pos = -1;   /* 4.0: where the file position is (-1 unknown): sequential reads skip the seek */
 
+/* Close and open the PAK again (after sleep or a failed read). */
 static void pak_reopen(void)
 {
     if (pak_fd >= 0)
@@ -31,6 +44,8 @@ int vcpe_pak_open(const char *path)
     return pak_fd;
 }
 
+/* Open the PAK and compare its header with what the EBOOT was built for (magic, total size, build stamp). Players
+ * copy files by hand: a missing, truncated or mismatched PAK gets a clear message instead of a crash later. */
 void vcpe_pak_open_checked(const char *file, const char *title, const char *magic, uint32_t size, uint32_t stamp)
 {
     char p[300], msg[600];
@@ -55,6 +70,9 @@ void vcpe_pak_open_checked(const char *file, const char *title, const char *magi
     }
 }
 
+/* 4.1: the PAK's path, for modules that open their own handle on it (vcpe_pack's background loader) */
+const char *vcpe_pak_path(void) { return pak_path; }
+
 void vcpe_pak_close(void)
 {
     if (pak_fd >= 0)
@@ -63,8 +81,10 @@ void vcpe_pak_close(void)
     pak_pos = -1;
 }
 
+/* Read size bytes at offset off into dst. 0 on success, -1 after every retry failed. */
 int vcpe_pak_read(uint32_t off, void *dst, uint32_t size)
 {
+    uint32_t observed=vcpe_observe_begin();
     uint8_t *mem = dst;
     uint32_t got = 0;
     /* a failed read (stale handle after sleep, stick still waking up) reopens the PAK and retries */
@@ -85,6 +105,7 @@ int vcpe_pak_read(uint32_t off, void *dst, uint32_t size)
         got = 0;
         while (got < size) {
             /* with a progress hook (loading screen) in chunks, so it can redraw between them */
+            /* With a loading screen up, read in 256 KB chunks so it can redraw between them. */
             uint32_t n = size - got;
             if (vcpe_pak_progress && n > 256u * 1024)
                 n = 256u * 1024;
@@ -99,9 +120,12 @@ int vcpe_pak_read(uint32_t off, void *dst, uint32_t size)
                 vcpe_pak_progress((uint32_t)r);
         }
     }
+    vcpe_observe_end(VCPE_COST_IO,observed);
     return got == size ? 0 : -1;
 }
 
+/* Allocate and read in one go. The block is 64-byte aligned (GE and DMA friendly) and written back from the CPU
+ * cache, so the GE can use it as texture data right away. */
 void *vcpe_pak_read_alloc(uint32_t off, uint32_t size)
 {
     const char *name = strrchr(pak_path, '/');
@@ -109,6 +133,7 @@ void *vcpe_pak_read_alloc(uint32_t off, uint32_t size)
                              (unsigned)((size + 1023) / 1024));
     uint8_t *mem = memalign(64, size ? size : 64);
     if (!mem) {
+        vcpe_observe_fail("PAK",size);
         vcpe_step_end(st, 0);
         return 0;
     }

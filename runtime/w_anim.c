@@ -1,3 +1,17 @@
+/* HOW THIS FILE WORKS (a reimplementation of Unity's Animator, "Mecanim")
+ *
+ * An Animator runs a state machine from its controller (converted from Unity into constant tables: states,
+ * transitions with conditions, parameters, clips). Each state plays one clip; a clip animates properties of objects
+ * (position, scale, rotation, sprite, colour, enabled flags, UI layout...) with curves, and can fire events (calls
+ * into the game's scripts) at given times.
+ *
+ * Per frame, in two passes like Unity: anim_update_all: advance every animator's time, fire the events passed, and
+ * take a transition if its conditions hold (trigger set, bool true, int compared...) and its exit time was reached;
+ * anim_apply_all:  write the values: first every animated property back to its default ("write defaults"), then the
+ * current clip's curves at the current time.
+ *
+ * Animated paths ("Body/Arm") are bound to real objects when the scene or prefab loads (W.bind), so evaluation never
+ * searches by name. */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6,6 +20,7 @@
 #include "w_world.h"
 
 /* UnityEditor.Animations.AnimatorConditionMode */
+/* Condition kinds and parameter kinds, numbered as in Unity's own enums so converted data needs no translation. */
 enum { COND_IF = 1, COND_IFNOT = 2, COND_GREATER = 3, COND_LESS = 4, COND_EQUALS = 6, COND_NOTEQUAL = 7 };
 enum { PK_FLOAT = 1, PK_INT = 3, PK_BOOL = 4, PK_TRIGGER = 9 };
 
@@ -17,6 +32,7 @@ static float clip_len(int clip) { return clip >= 0 ? g_aclips[clip].length : 0; 
 static int state_clip(const Anim *a) { return g_astates[g_actrls[a->ctrl].first_state + a->state].clip; }
 
 /* ------------------------------------------------------------------ property access */
+/* Read an animatable property of an object (used to capture its default value). */
 static float prop_get(int go, int prop)
 {
     if (go < 0 || go >= W.nobj)
@@ -65,12 +81,15 @@ static float prop_get(int go, int prop)
     return 0;
 }
 
+/* Curves that toggle GameObjects (P_ACTIVE) are collected and the activity refresh runs once after all animators
+ * applied. */
 static int hierarchy_dirty;
 static int16_t act_dirty[64];
 static int n_act_dirty;
 
 static inline uint8_t u8c(float v) { return v <= 0 ? 0 : v >= 1 ? 255 : (uint8_t)(v * 255.0f + 0.5f); }
 
+/* Write an animatable property. Colours are 0..1 floats in Unity, stored as bytes here. */
 static void prop_set(int go, int prop, float v)
 {
     if (go < 0 || go >= W.nobj || !W.obj[go].alive)
@@ -140,6 +159,8 @@ static void prop_set(int go, int prop, float v)
 }
 
 /* ------------------------------------------------------------------ curves */
+/* Value of a curve at time t (key times are in milliseconds). Keys are step (sprite swaps), linear, or a cubic
+ * polynomial per segment (Unity's Hermite curves, converted to a t^3 + b t^2 + c t + d). */
 static float curve_at(const ACurve *cv, float t)
 {
     const AKey *k = &g_akeys[cv->first];
@@ -168,6 +189,7 @@ static float curve_at(const ACurve *cv, float t)
     return ((a->a * dt + a->b) * dt + a->c) * dt + a->d;
 }
 
+/* Binding slot of an animated path (hash), by binary search in the controller's sorted path list. */
 static int slot_of(const Anim *a, uint32_t path)
 {
     const ACtrl *c = &g_actrls[a->ctrl];
@@ -192,6 +214,8 @@ static int target(const Anim *a, int slot)
     return W.bind[a->bind_first + slot];
 }
 
+/* Remember the value every animated property had before animation: 'write defaults' restores it each frame before the
+ * clip is applied. */
 static void capture_defaults(Anim *a)
 {
     const ACtrl *c = &g_actrls[a->ctrl];
@@ -211,6 +235,7 @@ static void reset_params(Anim *a)
             a->params[g_apdefs[i].param] = g_apdefs[i].v;
 }
 
+/* Back to the default state and default parameter values (Unity does this when an Animator is re-enabled). */
 static void reset_state(Anim *a)
 {
     a->state = g_actrls[a->ctrl].def;
@@ -219,6 +244,7 @@ static void reset_state(Anim *a)
     a->dirty = 1;
 }
 
+/* Create an animator for an object (scene load or instantiate). */
 int anim_add(int go, int ctrl, int update, int enabled, int bind_first)
 {
     int r = -1;
@@ -283,6 +309,7 @@ void anim_world_init(void)
 }
 
 /* ------------------------------------------------------------------ state machine */
+/* All conditions of a transition hold? */
 static int conds_ok(const Anim *a, const ATrans *t)
 {
     for (int i = 0; i < t->ncond; i++) {
@@ -300,6 +327,7 @@ static int conds_ok(const Anim *a, const ATrans *t)
     return 1;
 }
 
+/* Triggers used by a transition are reset (Unity's triggers fire once). */
 static void consume(Anim *a, const ATrans *t)
 {
     for (int i = 0; i < t->ncond; i++) {
@@ -316,6 +344,7 @@ static void enter(Anim *a, int state)
     a->dirty = 1;
 }
 
+/* Call the clip events whose time lies in (t0, t1] (or [t0, t1] on the first frame). */
 static void fire_events(Anim *a, int clip, float t0, float t1, int include0)
 {
     if (clip < 0)
@@ -332,6 +361,7 @@ static void fire_events(Anim *a, int clip, float t0, float t1, int include0)
 }
 
 /* exit time: Mecanim fires when the normalized time passes exitTime; 0 means the end of the first loop */
+/* Did normalized time (0..1 per loop) cross the transition's exit time during this step? */
 static int exit_reached(const ATrans *t, float n0, float n1, int loop)
 {
     float e = t->exit;
@@ -350,6 +380,8 @@ static int exit_reached(const ATrans *t, float n0, float n1, int loop)
     return n1 >= e;
 }
 
+/* Advance one animator: time, events (a looping clip that wraps fires the end of this loop and the start of the
+ * next), then transitions: 'any state' ones first, then the current state's, the first that passes wins. */
 static void step(Anim *a, float dt)
 {
     const ACtrl *cd = &g_actrls[a->ctrl];
@@ -408,6 +440,7 @@ static void step(Anim *a, float dt)
     }
 }
 
+/* Pass 1 for every animator. Inactive objects are skipped and reset when they come back. */
 void anim_update_all(float dt, float unscaled_dt)
 {
     for (int i = 0; i < g_nanim; i++) {
@@ -429,6 +462,7 @@ void anim_update_all(float dt, float unscaled_dt)
     }
 }
 
+/* Pass 2 for one animator: defaults, then the clip's sprite frames and curves at the current time. */
 static void apply(Anim *a)
 {
     const ACtrl *cd = &g_actrls[a->ctrl];
@@ -470,6 +504,7 @@ static void apply(Anim *a)
     }
 }
 
+/* Pass 2 for every animator, then refresh activity for objects that curves switched on or off. */
 void anim_apply_all(void)
 {
     for (int i = 0; i < g_nanim; i++) {
@@ -497,6 +532,7 @@ void anim_apply_all(void)
 }
 
 /* ------------------------------------------------------------------ script API */
+/* Script API: the Animator calls game scripts make (SetTrigger, SetBool, Play...). */
 int anim_of(int go) { return (go >= 0 && go < W.nobj) ? W.obj[go].anim : -1; }
 
 /* defaults must be read once the whole prefab instance exists (targets created later in the same

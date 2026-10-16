@@ -39,6 +39,9 @@ void vcpe_spr_preload(int img);           /* load all pages of an image now (loa
  * 4.0: when no single block is free (fragmented heap), every page gets its own allocation instead */
 int vcpe_spr_load_all(void (*progress)(int done, int total));
 int vcpe_spr_resident_kb(void);
+/* Between frames only: free at most max_pages cold heap pages towards bytes. idle_frames is the minimum time since
+ * last use; current-frame pages, fixed arenas and all-resident slabs are never touched. Returns actual heap bytes. */
+uint32_t vcpe_spr_trim(uint32_t bytes, int max_pages, uint32_t idle_frames);
 extern int vcpe_spr_loads;                    /* page loads since start (perf lines) */
 extern int vcpe_spr_fails;                    /* 4.0: pages that could not be loaded (drawn as nothing) */
 /* 4.0: the page cache in fixed slots inside one block instead of one malloc per page: no heap traffic while playing
@@ -51,7 +54,8 @@ int vcpe_spr_arena(void *mem, uint32_t size);
 
 /* the camera: room coordinates minus (x, y) = screen */
 void vcpe_spr_view(float x, float y);
-void vcpe_spr_additive(int on);
+void vcpe_spr_additive(int on);      /* 0 normal, 1 additive, 2 subtractive */
+void vcpe_spr_filter(int nearest);   /* 4.5: 0 = bilinear (scaled pictures); default 1 (pixel art) */
 void vcpe_spr_flash(int on);
 /* an image's palette (RGBA 0xAABBGGRR entries, index 0 transparent) and a substitute palette for the next draws
  * (palette swaps: 64-byte aligned, same size, kept alive until the frame is drawn; 0 restores the image's own) */

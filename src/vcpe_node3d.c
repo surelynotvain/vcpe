@@ -1,4 +1,19 @@
 /* VCPE 3D scene: node tree, world matrices, mesh drawing and Godot-style AnimationPlayers (see vcpe_node3d.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * A 3D scene converted from Godot: a tree of nodes, each with a position, a rotation (Euler angles in radians,
+ * Godot's Y-X-Z order), a scale, an optional mesh, a visibility flag, render layers and a parent. The converter
+ * writes the scene as constant tables (VcpeScene3D); vcpe_node3d_load copies the changeable parts into the Node
+ * array.
+ *
+ * Each node has a local matrix (relative to its parent) and a world matrix (parent's world times local). Matrices are
+ * only rebuilt when a node's position, rotation or scale changed, or when a parent moved, because building them takes
+ * sin/cos per node.
+ *
+ * AnimationPlayers replay converted Godot animations: a clip is a set of tracks, each track a list of keys (time + up
+ * to 3 values) for one property of one node (position, rotation, scale, visibility, transparency, the camera's field
+ * of view), or events (method calls, sounds) that fire when playback passes their time. */
 #include <pspkernel.h>
 #include <pspgu.h>
 #include <pspgum.h>
@@ -9,6 +24,7 @@
 #include "vcpe_node3d.h"
 
 typedef struct {
+    /* A node's live state. key[] remembers the pos/rot/scale the cached local matrix was built from. */
     float pos[3], rot[3], scale[3];
     int16_t mesh, parent;
     uint8_t visible, transparency;
@@ -16,9 +32,11 @@ typedef struct {
     uint8_t dirty, moved;   /* dirty: recompute the local matrix; moved: world matrix changed in this update */
     float key[9];           /* pos, rot, scale the cached local matrix was built from */
     float local[16], world[16];
+    int8_t lod;         /* LOD level drawn last frame (hysteresis), -1: none yet */
 } Node;
 
 typedef struct {
+    /* An AnimationPlayer's state: which clip, how far into it (seconds), playing or stopped. */
     int clip;          /* playing clip (index into the scene's clips), or -1 */
     float t;
     int playing;
@@ -27,8 +45,11 @@ typedef struct {
 static const VcpeScene3D *S;
 static Node *nodes;
 static Player *players;
+/* Field of view set by an animation track (0 = none); the game passes it to the camera. */
 float vcpe_anim_fov;
 
+/* FNV-1a hash of a name. The converter stores node and clip names as these hashes, so lookups compare numbers, not
+ * strings. */
 uint32_t vcpe_hash(const char *s)
 {
     uint32_t h = 2166136261u;
@@ -40,6 +61,7 @@ uint32_t vcpe_hash(const char *s)
 }
 
 /* ------------------------------------------------------------------ nodes */
+/* Start a scene: copy every node's initial state, mark every matrix as needing a build, start autoplay animations. */
 void vcpe_node3d_load(const VcpeScene3D *s)
 {
     S = s;
@@ -58,6 +80,7 @@ void vcpe_node3d_load(const VcpeScene3D *s)
         nodes[i].parent = d->parent;
         nodes[i].transparency = d->transparency;
         nodes[i].dirty = 1;
+        nodes[i].lod = -1;
     }
     for (int p = 0; p < s->nplayers; p++) {
         players[p].clip = -1;
@@ -87,6 +110,7 @@ float *vcpe_node3d_rot(int n) { return nodes[n].rot; }
 float *vcpe_node3d_scale(int n) { return nodes[n].scale; }
 void vcpe_node3d_world(int n, float out[16]) { memcpy(out, nodes[n].world, sizeof nodes[n].world); }
 
+/* 4x4 matrix product o = a * b (row-major). Works when o is a or b, through a temporary. */
 static void mat_mul(const float *a, const float *b, float *o)
 {
     float r[16];
@@ -97,6 +121,8 @@ static void mat_mul(const float *a, const float *b, float *o)
 }
 
 /* T * Ry * Rx * Rz * S (Godot's default YXZ euler order), row-major */
+/* Local matrix = translate * rotate Y * rotate X * rotate Z * scale, written out directly (the rotation part is the
+ * product of the three axis rotations, each column scaled). */
 static void local_matrix(const Node *n, float *m)
 {
     float cx = cosf(n->rot[0]), sx = sinf(n->rot[0]), cy = cosf(n->rot[1]), sy = sinf(n->rot[1]);
@@ -116,6 +142,8 @@ static void local_matrix(const Node *n, float *m)
     m[15] = 1;
 }
 
+/* Rebuild the world matrices that changed. Parents come before children in the table, so one pass in order is enough.
+ */
 static void update_world(void)
 {
     /* the converter writes parents before their children. Local matrices are cached and only rebuilt when
@@ -146,6 +174,8 @@ static void update_world(void)
 void vcpe_node3d_refresh(void) { update_world(); }
 
 /* inverse of an affine row-major 4x4 */
+/* Inverse of an affine matrix (rotation/scale + translation): invert the 3x3 part, then move the translation back
+ * through it. */
 static void mat_inv_affine(const float *m, float *o)
 {
     float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], k = m[10];
@@ -160,6 +190,9 @@ static void mat_inv_affine(const float *m, float *o)
     o[15] = 1;
 }
 
+/* Move a node under another parent without it jumping on screen: its new local matrix is inverse(new parent's world)
+ * * its world, then split back into position, scale (lengths of the columns, negative if mirrored) and YXZ Euler
+ * angles. */
 void vcpe_node3d_set_parent(int n, int parent)
 {
     if (n < 0) return;
@@ -194,6 +227,7 @@ void vcpe_node3d_set_parent(int n, int parent)
     d->dirty = 1;
 }
 
+/* A node is shown only if it and all its parents are visible. */
 static int shown(int i)
 {
     for (; i >= 0; i = nodes[i].parent)
@@ -207,14 +241,44 @@ int vcpe_node3d_parent(int n) { return n >= 0 ? nodes[n].parent : -1; }
 uint32_t vcpe_node3d_layers(int n) { return n >= 0 ? nodes[n].layers : 0; }
 float vcpe_node3d_opacity(int n) { return n >= 0 ? 1.0f - nodes[n].transparency / 255.0f : 0; }
 
+/* Draw every shown node with a mesh in the given layers: cull it against the view by its bounding sphere, set its
+ * world matrix, draw its mesh (fading it if partly transparent). */
+static float lod_px;   /* 0: LOD off */
+void vcpe_node3d_lod(float px) { lod_px = px > 0 ? px : 0; }
+
+/* The coarsest LOD level of mesh m whose error, seen from the camera, stays under the threshold (vcpe_lod's rule:
+ * error x pixels-per-unit / distance to the sphere's nearest point; a coarser level than last frame needs 0.75 x the
+ * threshold, so a node at a boundary does not flicker). */
+static int lod_pick(const VcpeLodView *v, const VcpeMeshLod *ml, const float c[3], float r, float scale, int prev)
+{
+    float dx = c[0] - v->pos[0], dy = c[1] - v->pos[1], dz = c[2] - v->pos[2];
+    float d = sqrtf(dx * dx + dy * dy + dz * dz) - r;
+    if (d < 1e-3f)
+        return 0;
+    float k = scale * v->px_k / d;
+    for (int l = ml->levels; l > 0; l--) {
+        float t = v->thresh_px;
+        if (prev >= 0 && l > prev)
+            t *= v->down_k;
+        if (ml->err[l - 1] * k <= t)
+            return l;
+    }
+    return 0;
+}
+
 void vcpe_node3d_draw(uint32_t cull)
 {
+    VcpeLodView view;
+    int use_lod = lod_px > 0 && S->lods && S->lod_ranges;
+    if (use_lod)
+        vcpe_3d_lod_view(&view, lod_px);
     for (int i = 0; i < S->nnodes; i++) {
         int m = nodes[i].mesh;
         /* fully transparent (GeometryInstance3D.transparency 1): not drawn; partial transparency comes later */
         if (m < 0 || !(nodes[i].layers & cull) || nodes[i].transparency >= 250 || !shown(i))
             continue;
         const VcpeMeshDef *mdf = &S->meshes[m];
+        int lvl = 0;
         if (mdf->bound[3] > 0) {   /* off-screen: skip (sphere moved by the world matrix) */
             const float *w = nodes[i].world, *b = mdf->bound;
             float c[3];
@@ -224,6 +288,10 @@ void vcpe_node3d_draw(uint32_t cull)
             if (s2 > sm) sm = s2;
             if (!vcpe_3d_visible(c, b[3] * sqrtf(sm)))
                 continue;
+            if (use_lod && S->lods[m].levels) {
+                lvl = lod_pick(&view, &S->lods[m], c, b[3] * sqrtf(sm), sqrtf(sm), nodes[i].lod);
+                nodes[i].lod = (int8_t)lvl;
+            }
         }
         vcpe_3d_model(nodes[i].world);
         if (nodes[i].transparency)
@@ -231,7 +299,18 @@ void vcpe_node3d_draw(uint32_t cull)
         const VcpeMeshDef *md = &S->meshes[m];
         for (int b = md->first; b < md->first + md->n; b++) {
             const VcpeBatch *bt = &S->batches[b];
-            vcpe_3d_draw(bt->page, S->geo + (bt->voff - S->geo_off), (const uint16_t *)(S->geo + (bt->ioff - S->geo_off)), bt->nidx);
+            uint32_t ioff = bt->ioff, nidx = bt->nidx;
+            if (use_lod && S->lods[m].levels) {
+                const VcpeMeshLod *ml = &S->lods[m];
+                vcpe_lod_stat_full += (int)nidx / 3;
+                if (lvl) {
+                    const VcpeLodRange *r = &S->lod_ranges[ml->first + (b - md->first) * ml->levels + lvl - 1];
+                    ioff = r->ioff;
+                    nidx = r->nidx;
+                }
+                vcpe_lod_stat_drawn += (int)nidx / 3;
+            }
+            vcpe_3d_draw(bt->page, S->geo + (bt->voff - S->geo_off), (const uint16_t *)(S->geo + (ioff - S->geo_off)), nidx);
         }
         if (nodes[i].transparency)
             vcpe_3d_alpha(1);
@@ -240,6 +319,7 @@ void vcpe_node3d_draw(uint32_t cull)
 }
 
 /* ------------------------------------------------------------------ animation */
+/* Godot's ease curve for a key's transition value c: c > 0 eases in/out by a power, c < 0 is an in-out S-curve. */
 static float ease(float x, float c)   /* Godot's ease() */
 {
     if (x < 0) x = 0;
@@ -255,11 +335,14 @@ static float ease(float x, float c)   /* Godot's ease() */
     return 0;
 }
 
+/* Catmull-Rom spline through b and c, using a and d for the slopes. */
 static float cubic(float a, float b, float c, float d, float t)   /* Godot cubic_interpolate (Catmull-Rom) */
 {
     return 0.5f * ((b * 2.0f) + (-a + c) * t + (2.0f * a - 5.0f * b + 4.0f * c - d) * t * t + (-a + 3.0f * b - 3.0f * c + d) * t * t * t);
 }
 
+/* Value of a track at time t: before the first / after the last key, hold it; else find the key pair around t and
+ * interpolate (nearest, linear or cubic). */
 static void sample(const VcpeTrackDef *tr, float t, float out[3])
 {
     const VcpeKeyDef *k = S->keys + tr->first;
@@ -279,6 +362,8 @@ static void sample(const VcpeTrackDef *tr, float t, float out[3])
         out[j] = tr->interp == VCPE_INTERP_CUBIC ? cubic(a[j], b[j], c[j], d[j], w) : b[j] + (c[j] - b[j]) * w;
 }
 
+/* Advance a clip from t0 to t1: event tracks fire every key in (t0, t1] (including t0 on the first update); value
+ * tracks write their value at t1 into the node. */
 static void apply(int p, const VcpeClipDef *cl, float t0, float t1, int first)
 {
     for (int ti = cl->first; ti < cl->first + cl->n; ti++) {
@@ -311,6 +396,7 @@ static void apply(int p, const VcpeClipDef *cl, float t0, float t1, int first)
     }
 }
 
+/* Players started since their last update: their keys at time 0 must fire too. */
 static int started[256];   /* a clip that has just been started fires its keys at time 0 too */
 
 int vcpe_anim_find(uint32_t h)
@@ -321,6 +407,7 @@ int vcpe_anim_find(uint32_t h)
     return -1;
 }
 
+/* Play a clip (by name hash) from the start on player p. */
 void vcpe_anim_play(int p, uint32_t clip)
 {
     if (p < 0)
@@ -344,6 +431,8 @@ float vcpe_anim_time(int p) { return p >= 0 ? players[p].t : 0; }
 uint32_t vcpe_anim_clip(int p) { return p >= 0 && players[p].clip >= 0 ? S->clips[players[p].clip].name : 0; }
 float vcpe_anim_length(int p) { return p >= 0 && players[p].clip >= 0 ? S->clips[players[p].clip].length : 0; }
 
+/* Advance every playing animation by dt, then update the matrices. A looping clip that passes its end applies the
+ * remainder of this loop, wraps, and continues from 0 (firing the start keys again). */
 void vcpe_node3d_update(float dt)
 {
     for (int p = 0; p < S->nplayers; p++) {

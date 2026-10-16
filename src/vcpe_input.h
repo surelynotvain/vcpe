@@ -4,6 +4,9 @@
 #define VCPE_INPUT_H
 #include <stdint.h>
 
+/* A game often runs its logic at a fixed rate (e.g. 60 updates/s) but samples input every display frame. If a button
+ * is tapped between two updates it would be missed; here "pressed" collects every press until an update consumes it
+ * with vcpe_input_pressed. */
 typedef struct {
     uint32_t held, pressed, previous;
 } VcpeInput;
@@ -14,6 +17,7 @@ static inline void vcpe_input_reset(VcpeInput *state, uint32_t held)
     state->pressed = 0;
 }
 
+/* New presses = held now and not held at the previous sample; they accumulate until read. */
 static inline void vcpe_input_sample(VcpeInput *state, uint32_t held)
 {
     state->pressed |= held & ~state->previous;
@@ -28,6 +32,7 @@ static inline uint32_t vcpe_input_pressed(VcpeInput *state)
     return pressed;
 }
 
+/* Combine several controllers: a button is down if any controller holds it. */
 static inline uint32_t vcpe_input_union(const uint32_t *inputs, int count)
 {
     uint32_t result = 0;

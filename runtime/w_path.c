@@ -6,6 +6,10 @@
 #include "w_world.h"
 #include "w_phys.h"
 
+/* A* search on the scene's grid (converted from the AstarPath grid graph). The grid is built once per scene: a node
+ * is walkable if no collider of the grid's layer mask overlaps a circle of the node diameter at its centre. path_find
+ * runs A*: nodes to explore sit in a binary heap ordered by f = cost so far + straight-line distance to the goal; each
+ * step takes the best node and relaxes its neighbours. The path is read back through came[] from the goal. */
 static int gw, gh;
 static float ox, oy, ns;
 static uint8_t *walk;
@@ -23,6 +27,7 @@ void path_free(void)
     gw = gh = 0;
 }
 
+/* Build the walkable grid for the scene. */
 void path_build(void)
 {
     path_free();
@@ -50,6 +55,7 @@ void path_build(void)
         }
 }
 
+/* Grid node of a world position, clamped to the grid; if that node is blocked, the nearest walkable one. */
 static int node_at(float x, float y)
 {
     int i = (int)floorf((x - ox) / ns), j = (int)floorf((y - oy) / ns);
@@ -70,6 +76,7 @@ static int node_at(float x, float y)
     return best;
 }
 
+/* Binary heap push / pop on f cost (the smallest on top). */
 static void hpush(int n)
 {
     int i = heapn++;
@@ -98,6 +105,7 @@ static int hpop(void)
     return top;
 }
 
+/* A* from (sx, sy) to (tx, ty); writes the cell centres into out and returns their count. */
 int path_find(float sx, float sy, float tx, float ty, float *out, int max)
 {
     if (!gw)

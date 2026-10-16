@@ -1,6 +1,23 @@
 /* VCPE audio: software mixer. IMA-ADPCM SFX voices (22.05 kHz mono, resident) + streamed
  * IMA-ADPCM music (44.1 kHz stereo) from the music PAK, output at 44.1 kHz stereo.
  * Games put their own sound policy (which voice plays what, volume curves) on top. */
+
+/* HOW THIS FILE WORKS
+ *
+ * The PSP has no sound mixer the game can use freely, only output channels that play a buffer of 16-bit stereo
+ * samples. So mixing is done in software, on a dedicated thread:
+ *
+ * - mix_thread fills a block of OUT_FRAMES stereo samples (1024 = 23 ms at 44.1 kHz), adds every playing sound effect
+ *   and the music into it, then hands it to sceAudioOutputPannedBlocking, which blocks until the hardware has room.
+ *   Two output buffers alternate, so one plays while the next is mixed.
+ * - Sound effects are kept in memory compressed with IMA-ADPCM (4 bits per sample, a quarter of 16-bit PCM), 22.05
+ *   kHz mono, and decoded as they play. Each "voice" plays one effect with its own pitch, gain and loop flag.
+ * - Music is too big for memory: io_thread streams it from the music PAK into a ring buffer of 48 blocks, ahead of
+ *   the mixer. The mixer only reads the ring; when it frees a block it signals io_thread to read more.
+ *
+ * IMA-ADPCM in brief: each 4-bit code says how much the sample changes relative to a "step size", and the step size
+ * itself grows or shrinks after each code (step_table / index_table, the standard IMA tables). Data comes in blocks
+ * of 1024 samples; each block starts with a header (first sample + step index) so decoding can start at any block. */
 #include <pspkernel.h>
 #include <pspaudio.h>
 #include <pspiofilemgr.h>
@@ -16,11 +33,14 @@
 #define VCPE_AUDIO_FRAMES 1024   /* 4.0: output block (1024 = 23 ms); -DVCPE_AUDIO_FRAMES=512 halves the latency */
 #endif
 #define OUT_FRAMES VCPE_AUDIO_FRAMES
+/* Samples per ADPCM block. A mono block is a 4-byte header + 512 bytes of codes; music has one block per channel. */
 #define ADPCM_BLOCK 1024
 #define SFX_BLOCK_BYTES (4 + ADPCM_BLOCK / 2)
 #define MUS_BLOCK_BYTES (2 * (4 + ADPCM_BLOCK / 2))
+/* Music ring: 48 stereo blocks = about 1.1 s of music read ahead, which hides slow memory-stick reads. */
 #define RING_BLOCKS 48
 
+/* The standard IMA-ADPCM step sizes; index_table says how the step index moves after each code. */
 static const int step_table[89] = {
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
     50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230,
@@ -32,6 +52,8 @@ static const int index_table[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 
 
 typedef struct { int pred, index; } Adpcm;
 
+/* Decode one 4-bit code: bits 0-2 build the change from the step size, bit 3 is the sign. The prediction is clamped
+ * to 16 bits and the step index adapts for the next sample. */
 static inline int adpcm_step(Adpcm *s, int code)
 {
     int step = step_table[s->index];
@@ -50,6 +72,9 @@ static inline int adpcm_step(Adpcm *s, int code)
 
 /* ---------------------------------------------------------------- SFX voices */
 typedef struct {
+    /* A voice: one sound effect playing. pos/frac is the read position in 16.16 fixed point (step = pitch), cur/next
+     * are the two samples it interpolates between. active and paused are volatile because the game thread sets them
+     * while the mixer thread reads them. */
     volatile int active;
     int loop;
     const uint8_t *data;
@@ -70,12 +95,16 @@ static const VcpeSound *sfx_tab, *music_tab;
 static int nsfx, nvoices;
 static Voice voices[VCPE_MAX_VOICES];
 static uint32_t start_count;
+/* Gains are 0..256 (256 = full). The music gain is also scaled by num/den (vcpe_music_scale) and by the fade. */
 static volatile int sfx_vol = 256, mus_vol = 256, mus_paused = 0;
 static volatile int mus_num = 1, mus_den = 1;
+/* Optional one-pole low-pass on the music ("heard through a wall"): y += (x - y) * k, with k in 1/32768 units. */
 static volatile int lp_k = 32768;   /* music low-pass: one pole (6 dB/octave), coefficient x 32768 (32768: off) */
 static int lp_l[2], lp_r[2];
 static volatile uint32_t mixed_ms;
 
+/* Decode sample i of a voice's effect. Decoding is sequential (each sample depends on the previous), so this must be
+ * called with i increasing by one; at the start of each block the decoder state is reset from the block header. */
 static int sfx_sample(Voice *v, uint32_t i)
 {
     /* decode sample i sequentially (i only ever increases by one) */
@@ -89,6 +118,9 @@ static int sfx_sample(Voice *v, uint32_t i)
     return adpcm_step(&v->st, code);
 }
 
+/* Start effect id on voice vi. The voice is switched off while it is set up, so the mixer thread never sees
+ * half-written fields. The returned handle carries a generation counter: a handle to a voice that has since been
+ * reused is recognised as stale. */
 int vcpe_voice_start(int vi, int id, float pitch, int loop)
 {
     if (id < 0 || id >= nsfx || !sfx_mem || vi < 0 || vi >= nvoices)
@@ -102,6 +134,8 @@ int vcpe_voice_start(int vi, int id, float pitch, int loop)
     v->samples = sfx_tab[id].samples;
     v->pos = 0;
     v->frac = 0;
+    /* Effects are 22050 Hz, output is 44100 Hz: at pitch 1 the voice advances half a source sample per output sample
+     * (32768 = 0.5 in 16.16). */
     v->step = (uint32_t)(32768.0f * pitch);   /* 22050 -> 44100 */
     v->cur = sfx_sample(v, 0);
     v->next = v->samples > 1 ? sfx_sample(v, 1) : 0;
@@ -111,6 +145,7 @@ int vcpe_voice_start(int vi, int id, float pitch, int loop)
     return (v->gen << 8) | vi;
 }
 
+/* Play on a free voice of the range [first, last], or steal the one that started longest ago. */
 int vcpe_sfx_play(int id, float pitch, int gain256, int first, int last)
 {
     if (first < 0) first = 0;
@@ -136,6 +171,7 @@ void vcpe_voice_pitch(int vi, float pitch) { if (vi >= 0 && vi < nvoices) voices
 void vcpe_voice_gain(int vi, int gain) { if (vi >= 0 && vi < nvoices) voices[vi].gain = gain; }
 int vcpe_voice_count(void) { return nvoices; }
 
+/* Handle back to voice index, or -1 if that voice has been restarted since. */
 int vcpe_handle_voice(int h)
 {
     if (h < 0) return -1;
@@ -150,6 +186,9 @@ void vcpe_voices_stop_all(void)
 }
 
 /* ---------------------------------------------------------------- music */
+/* Music streaming state. ring_rd / ring_wr count blocks read by the mixer / written by io_thread (the ring index is
+ * the count modulo RING_BLOCKS). gen changes on every track change; the mixer plays only after io_thread acknowledged
+ * the new gen (gen_ack), so it never plays blocks of the old track. */
 static int mus_fd = -1;
 static char mus_path[256];
 static uint8_t ring[RING_BLOCKS][MUS_BLOCK_BYTES];
@@ -163,12 +202,15 @@ static Adpcm mus_st[2];
 static int io_sema = -1;
 static volatile int running;
 
+/* The music reader thread. It refills the ring up to 8 blocks per read, sleeps on io_sema when the ring is full, and
+ * is woken by the mixer whenever a block was consumed or the track changed. */
 static int io_thread(SceSize args, void *argp)
 {
     int my_gen = -1, track = -1, fd_gen = vcpe_resume_gen;
     uint32_t off = 0, size = 0, pos = 0;
     (void)args; (void)argp;
     while (running) {
+        /* Track changed: drop everything in the ring and start reading the new track from its beginning. */
         if (my_gen != gen) {
             my_gen = gen;
             track = want_track;
@@ -199,6 +241,8 @@ static int io_thread(SceSize args, void *argp)
                 fd_gen = vcpe_resume_gen;
                 mus_fd = sceIoOpen(mus_path, PSP_O_RDONLY, 0);
             }
+            /* Read straight into the ring. A short or failed read (memory stick asleep, stale handle) is not queued:
+             * the handle is closed and the read retried 0.1 s later. */
             int want = n * MUS_BLOCK_BYTES, r = -1;
             if (mus_fd >= 0) {
                 sceIoLseek32(mus_fd, off + pos, PSP_SEEK_SET);
@@ -225,6 +269,8 @@ static int io_thread(SceSize args, void *argp)
     return 0;
 }
 
+/* Next stereo music sample for the mixer: silence when paused, while a track change is pending, or when the ring ran
+ * dry. Left and right are separate ADPCM streams in the same block. */
 static void music_frame(int *l, int *r)
 {
     if (gen_ack != gen || ring_rd >= ring_wr || mus_paused) {
@@ -250,6 +296,7 @@ static void music_frame(int *l, int *r)
     }
 }
 
+/* Switch tracks: bump the generation and wake io_thread to refill the ring. */
 static void start_track(int t)
 {
     cur_track = t;
@@ -259,6 +306,8 @@ static void start_track(int t)
     sceKernelSignalSema(io_sema, 1);
 }
 
+/* Change the music. With a track already playing, it is faded out first (see mix_thread) and the new one starts
+ * after. */
 void vcpe_music_play(int track)
 {
     if (track == cur_track && !fading_out)
@@ -283,6 +332,7 @@ void vcpe_music_stop_now(void)
 void vcpe_sfx_gain(int gain256) { sfx_vol = gain256; }
 void vcpe_music_gain(int gain256) { mus_vol = gain256; }
 void vcpe_music_scale(int num, int den) { mus_den = den > 0 ? den : 1; mus_num = num; }
+/* Cut-off frequency to the one-pole coefficient: a = 1 - e^(-2*pi*f/44100). 0 or 20 kHz and above switch it off. */
 void vcpe_music_lowpass(float hz)
 {
     if (hz <= 0 || hz >= 20000) { lp_k = 32768; return; }
@@ -295,6 +345,7 @@ uint32_t vcpe_audio_ms(void) { return mixed_ms; }
 
 /* ---------------------------------------------------------------- output */
 static short __attribute__((aligned(64))) outbuf[2][OUT_FRAMES * 2];
+/* Two output buffers, alternated: one is queued to the hardware while the other is mixed. */
 static int audio_ch = -1;
 
 static inline short clip16(int s)
@@ -303,6 +354,8 @@ static inline short clip16(int s)
 }
 
 /* one voice over the whole block into the accumulator (same arithmetic as sample by sample, far fewer checks) */
+/* Mix one voice into the accumulator for a whole block: linear interpolation between cur and next by the fraction,
+ * times the gain. Whenever the fraction passes 1.0, advance one source sample; at the end, loop or stop. */
 static void mix_voice(Voice *v, int *acc, int n)
 {
     int cur = v->cur, next = v->next, gain = v->gain;
@@ -334,7 +387,11 @@ static void mix_voice(Voice *v, int *acc, int n)
 }
 
 static int mix_acc[OUT_FRAMES];
+/* 4.5: extra stereo sources (vcpe_stream) mixed after the gains; 0 = none, output unchanged */
+void (*vcpe_audio_mix_hook)(int *lr, int frames);
+static int mix_lr[OUT_FRAMES * 2];
 
+/* The mixer thread loop: one block per iteration, as long as audio runs. */
 static int mix_thread(SceSize args, void *argp)
 {
     int which = 0;
@@ -343,6 +400,8 @@ static int mix_thread(SceSize args, void *argp)
         short *out = outbuf[which];
         which ^= 1;
         /* song change: volume -= 0.04 every 0.01 s */
+        /* Song change in progress: lower the fade every block (24/256 per 23 ms, about 0.25 s to silence), then start
+         * the waiting track at full volume. */
         if (fading_out) {
             fade -= 24;
             if (fade <= 0) {
@@ -354,12 +413,21 @@ static int mix_thread(SceSize args, void *argp)
         int mg = (((mus_vol * fade) >> 8) * mus_num) / mus_den;
         int sg = sfx_vol;
         mixed_ms += (OUT_FRAMES * 1000) / 44100;
+        /* Effects first: every active voice into the integer accumulator (no clipping yet, so loud overlaps sum
+         * correctly). */
         memset(mix_acc, 0, sizeof mix_acc);
         for (int vi = 0; vi < nvoices; vi++) {
             Voice *v = &voices[vi];
             if (v->active && !v->paused)
                 mix_voice(v, mix_acc, OUT_FRAMES);
         }
+        void (*hook)(int *, int) = vcpe_audio_mix_hook;
+        if (hook) {
+            memset(mix_lr, 0, sizeof mix_lr);
+            hook(mix_lr, OUT_FRAMES);
+        }
+        /* Then per sample: music (with the low-pass), gains, effects added to both channels, and clipping to 16 bits.
+         */
         for (int i = 0; i < OUT_FRAMES; i++) {
             int l, r;
             music_frame(&l, &r);
@@ -371,14 +439,23 @@ static int mix_thread(SceSize args, void *argp)
             l = (l * mg) >> 8;
             r = (r * mg) >> 8;
             int s = (mix_acc[i] * sg) >> 8;
+            if (hook) {
+                l += mix_lr[i * 2];
+                r += mix_lr[i * 2 + 1];
+            }
             out[i * 2] = clip16(l + s);
             out[i * 2 + 1] = clip16(r + s);
         }
+        /* Queue the block; this blocks until the hardware can take it, which is what paces the thread to real time.
+         */
         sceAudioOutputPannedBlocking(audio_ch, PSP_AUDIO_VOLUME_MAX, PSP_AUDIO_VOLUME_MAX, out);
     }
     return 0;
 }
 
+/* Load the effects (whole, compressed), open the music PAK, reserve an output channel and start the two threads. The
+ * mixer runs at priority 0x12 and the reader at 0x14, both above the game's main thread (0x20), so a busy game frame
+ * does not starve the sound. */
 int vcpe_audio_init(const char *music_pak, int voices_n, uint32_t sfx_off, uint32_t sfx_size,
                     const VcpeSound *sfx, int sfx_n, const VcpeSound *music)
 {
@@ -410,6 +487,7 @@ int vcpe_audio_init(const char *music_pak, int voices_n, uint32_t sfx_off, uint3
     return 0;
 }
 
+/* Stop both threads (wake the reader so it sees running = 0), give them time to finish, release the channel. */
 void vcpe_audio_shutdown(void)
 {
     running = 0;
