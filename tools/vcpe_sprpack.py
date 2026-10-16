@@ -18,6 +18,7 @@ from PIL import Image
 from gm.gmtex import TexBuilder
 
 
+# Accept PIL images or numpy arrays, always return an RGBA uint8 array.
 def as_rgba(im):
     if isinstance(im, Image.Image):
         return np.asarray(im.convert('RGBA'))
@@ -27,6 +28,8 @@ def as_rgba(im):
     return np.asarray(Image.fromarray(a).convert('RGBA'))
 
 
+# Cut away fully transparent rows and columns around a frame (they would waste page space), remembering where the rest
+# starts.
 def trim(a):
     """-> (x, y, cropped) of the non-transparent part, or None when the frame is empty"""
     alpha = a[..., 3] > 0
@@ -37,6 +40,7 @@ def trim(a):
     return int(xs[0]), int(ys[0]), a[ys[0]:ys[-1] + 1, xs[0]:xs[-1] + 1]
 
 
+# TexBuilder does the palette and page work; this subclass feeds it plain images and writes the VSPR tables.
 class SprPack(TexBuilder):
     def __init__(self):
         self.gm = None
@@ -56,6 +60,8 @@ class SprPack(TexBuilder):
         self.meta.append((w, h, ox, oy))
         return idx
 
+    # Write the section: header (magic + 15 counts and offsets), then images, frames, pieces, pages, (no fonts, no
+    # glyphs), palettes and the page data, each 64-byte aligned. Row layouts match the C structs in src/vcpe_spr.h.
     def build(self):
         blobs, ims = self.finish()
         imgs = frames = pieces = pal = b''

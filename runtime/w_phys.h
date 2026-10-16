@@ -10,6 +10,8 @@ void phys_destroy(int obj);
 void phys_step(float dt);
 void phys_forget_pairs(int col);
 void phys_dirty(void);              /* invalidate the cached shape list (queries) */
+void phys_broadphase(int on);        /* default on; brute-force reference mode for engine comparisons */
+extern int phys_alloc_fails, phys_stat_candidates, phys_stat_grid_fallbacks;
 
 /* bodies (by object) */
 int phys_body(int go);

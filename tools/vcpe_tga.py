@@ -9,6 +9,9 @@ from pathlib import Path
 from PIL import Image
 
 
+# TGA layout: an 18-byte header, an optional id string, an optional palette (colour map), then the pixels, either raw
+# or RLE-compressed (image types 9-11 = types 1-3 with RLE). Type 1 = indexed, 2 = true colour, 3 = greyscale. Every
+# read goes through take(), which refuses to run past the end of the file.
 def load(path):
     data = Path(path).read_bytes()
     if len(data) < 18:
@@ -32,6 +35,8 @@ def load(path):
         pos += n
         return part
 
+    # One colour to RGBA: 16-bit is 5:5:5 + 1 alpha bit (each 5-bit channel widened to 8 bits), 24/32-bit is stored
+    # BGR(A).
     def colour(raw, depth, alpha):
         if depth == 16:
             v = int.from_bytes(raw, "little")
@@ -52,6 +57,8 @@ def load(path):
     total = width * height
     pixels = bytearray()
     decoded = 0
+    # RLE packets: a header byte, bit 7 set = one pixel repeated (low 7 bits + 1) times, clear = that many raw pixels.
+    # Uncompressed images are read as one big raw packet.
     while decoded < total:
         header = take(1)[0] if kind >= 9 else 0
         length = (header & 127) + 1 if kind >= 9 else total - decoded
@@ -71,6 +78,8 @@ def load(path):
             else:
                 pixels.extend((value[0], value[0], value[0], value[1] if bits == 16 else 255))
         decoded += length
+    # TGA stores rows bottom-up unless descriptor bit 5 is set, and right-to-left if bit 4 is set: flip to the normal
+    # top-left origin.
     result = Image.frombytes("RGBA", (width, height), bytes(pixels))
     if not desc & 32:
         result = result.transpose(Image.Transpose.FLIP_TOP_BOTTOM)

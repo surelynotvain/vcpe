@@ -4,9 +4,11 @@ The pspsdk only runs mksfoex when PARAM.SFO is missing, so each port's build.sh 
     import mksfo; mksfo.write(path, mksfo.entries("Title", "1.00", "UCJS10041"))"""
 import struct
 
+# Space reserved for some string values, as in Sony's files (the XMB expects at least these sizes).
 MAX_LEN = {"TITLE": 128, "DISC_ID": 16, "CATEGORY": 4}
 
 
+# The standard keys of a homebrew game's PARAM.SFO. CATEGORY "MG" = memory stick game.
 def entries(title, version, disc_id, memsize=0, parental=7):
     return {
         "APP_VER": "0" + version if len(version) == 4 else version,
@@ -22,6 +24,9 @@ def entries(title, version, disc_id, memsize=0, parental=7):
     }
 
 
+# PSF format: a 20-byte header, one 16-byte index entry per key (key name offset, value type, used length, reserved
+# length, value offset), the key names, then the values. Type 0x0404 = 32-bit integer, 0x0204 = UTF-8 string. Keys
+# must be sorted.
 def build(ent):
     keys, data, index = b"", b"", b""
     for name in sorted(ent):

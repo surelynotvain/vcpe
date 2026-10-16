@@ -37,5 +37,8 @@ void vcpe_music_gain(int gain256);
 void vcpe_music_scale(int num, int den);   /* extra music factor: ducking, muffling (1/1 = none) */
 void vcpe_music_lowpass(float hz);         /* music through a 6 dB/octave low-pass at hz (0: off), e.g. heard through a wall */
 uint32_t vcpe_audio_ms(void);              /* audio time mixed so far, in ms */
+/* 4.5: called by the mixer thread once per output block to add stereo samples (lr[2 * frames], zeroed, 44.1 kHz,
+ * mixed after the music and effect gains). vcpe_stream installs itself here. */
+extern void (*vcpe_audio_mix_hook)(int *lr, int frames);
 
 #endif

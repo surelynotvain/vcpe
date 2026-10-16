@@ -1,4 +1,16 @@
 /* VCPE test harness: AUTOTEST.TXT input scripts and frame recording (REC.RAW). */
+
+/* HOW THIS FILE WORKS (the autotest harness)
+ *
+ * If a file AUTOTEST.TXT sits next to the EBOOT, the game plays itself from that script instead of the pad. The pad
+ * module calls vcpe_test_step once per update; the script decides which buttons are "held" for that update: wait N
+ * do nothing for N updates press X       hold X for one update          hold X N   hold X for N updates rec N
+ * save every Nth shown frame to REC.RAW (480x272 RGBA, appended) snap NAME     save the current screen to
+ * SNAPNAME.RAW quit          end the program Games add their own commands through VcpeTestHooks (jump to a scene,
+ * check a value, ...).
+ *
+ * Together with a fixed time step and a fixed random seed in autotest runs, the same script always produces the same
+ * frames, byte for byte. That is what the engine's regression tests compare after every change. */
 #include <pspkernel.h>
 #include <pspdisplay.h>
 #include <pspiofilemgr.h>
@@ -16,6 +28,7 @@ static int script_wait, script_hold_frames;
 static unsigned script_hold;
 static int rec_every, rec_fd = -1, rec_n;
 
+/* Read the whole script into memory at start-up; no file means a normal run. */
 int vcpe_test_load(const VcpeTestHooks *hooks)
 {
     char p[300];
@@ -39,6 +52,7 @@ int vcpe_test_load(const VcpeTestHooks *hooks)
     return 1;
 }
 
+/* Run the script up to the next command that takes a frame, and report the buttons held for this update. */
 void vcpe_test_step(unsigned *held)
 {
     *held = 0;
@@ -48,6 +62,7 @@ void vcpe_test_step(unsigned *held)
         vcpe_present_hook();   /* pipeline: the screen shows the last frame, as without it (snapshots, recordings) */
     if (hk.pre)
         hk.pre();
+    /* Still inside a "hold" or "wait": nothing new is read from the script. */
     if (script_hold_frames > 0) {
         script_hold_frames--;
         *held = script_hold;
@@ -59,6 +74,8 @@ void vcpe_test_step(unsigned *held)
         script_wait--;
         return;
     }
+    /* Read lines until a command that takes a frame. Commands like "rec" or game checks run instantly and the next
+     * line follows in the same update. */
     while (*script_pos) {
         /* Engine-specific assertions/scripts can exceed the original 63 bytes.
          * Consume the whole line even when oversized: never execute fragments. */
@@ -77,6 +94,7 @@ void vcpe_test_step(unsigned *held)
             fprintf(stderr, "VCPE autotest line exceeds %zu bytes\n", sizeof(line) - 1);
             continue;
         }
+        /* Every line is: command, argument word, up to two numbers. '#' starts a comment line. */
         char cmd[16] = {0}, arg[16] = {0};
         int num = 0, num2 = 0;
         int k = sscanf(line, "%15s %15s %d %d", cmd, arg, &num, &num2);
@@ -121,6 +139,8 @@ void vcpe_test_step(unsigned *held)
     }
 }
 
+/* Copy the shown frame buffer row by row (its stride is 512 pixels, the file's 480) through the uncached address, so
+ * what is saved is what is in VRAM. */
 void vcpe_test_snap(const char *name)
 {
     if (vcpe_present_hook)
@@ -141,6 +161,7 @@ void vcpe_test_snap(const char *name)
     sceIoClose(fd);
 }
 
+/* Called after every shown frame: append it to the recording when one is running. */
 void vcpe_test_frame_end(void)
 {
     if (rec_fd >= 0 && ++rec_n % rec_every == 0) {

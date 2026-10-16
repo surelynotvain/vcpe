@@ -1,4 +1,14 @@
 /* VCPE HUD built-ins (see vcpe_hud.h). */
+
+/* HOW THIS FILE WORKS
+ *
+ * The HUD needs no game data at all: its font is the 8x8 debug font that ships inside the PSP SDK (libpspdebug's
+ * "msx" table, 1 bit per pixel). At first use it is expanded into a 128x128 4-bit texture (16x16 cells of 8x8 pixels,
+ * one per character code) with a 2-colour palette: transparent and white. Text is then one quad per character, tinted
+ * by the vertex colour.
+ *
+ * Button icons are drawn from shapes (discs, rings, lines, triangles) with vcpe_strip, so they look the same at any
+ * size and need no texture. */
 #include <pspkernel.h>
 #include <pspgu.h>
 #include <stdarg.h>
@@ -10,12 +20,16 @@
 #include "vcpe_math.h"
 #include "vcpe_hud.h"
 
+/* Each character is 8 bytes, one per row; bit 7 is the leftmost pixel. */
 extern unsigned char msx[];   /* libpspdebug's 8x8 font, 8 bytes per character, bit 7 = left pixel */
 
+/* The expanded font texture (4-bit, two pixels per byte) and its palette: entry 0 transparent, entry 1 white. */
 static uint8_t __attribute__((aligned(16))) font_tex[128 * 128 / 2];   /* 16x16 cells of 8x8, T4 */
 static uint32_t __attribute__((aligned(16))) font_clut[16] = {0x00FFFFFF, 0xFFFFFFFF};
 static int font_ready;
 
+/* Expand the 1-bit font into the 4-bit texture: character c goes to cell (c % 16, c / 16). In a 4-bit texture the
+ * even pixel of a pair is the low nibble, the odd pixel the high nibble. */
 static void font_init(void)
 {
     for (int c = 0; c < 256; c++) {
@@ -30,11 +44,14 @@ static void font_init(void)
             }
         }
     }
+    /* The GE reads RAM, not the CPU cache: write the new texels back to RAM. */
     sceKernelDcacheWritebackRange(font_tex, sizeof font_tex);
     sceKernelDcacheWritebackRange(font_clut, sizeof font_clut);
     font_ready = 1;
 }
 
+/* Bind the font texture, unless it is still bound from the previous string (vcpe_tex_bound): drawing 300 strings
+ * costs one texture bind, not 300. */
 static void font_bind(void)
 {
     if (!font_ready)
@@ -52,6 +69,8 @@ static void font_bind(void)
     vcpe_tex_flush();
 }
 
+/* One quad per visible character. Character code c sits at texel (c % 16 * 8, c / 16 * 8). Spaces only move the pen;
+ * '\n' goes back to x and down one line. */
 void vcpe_hud_text(float x, float y, const char *s, uint32_t color, float scale)
 {
     if (!s || !*s || (color >> 24) == 0)
@@ -69,6 +88,7 @@ void vcpe_hud_text(float x, float y, const char *s, uint32_t color, float scale)
     vcpe_gfx_flush();   /* drawn now: a game may bind raw sceGu textures next (the binding itself stays cached) */
 }
 
+/* Readable on any background: the same text in black one pixel down-right, then the text itself. */
 void vcpe_hud_text_shadow(float x, float y, const char *s, uint32_t color, float scale)
 {
     vcpe_hud_text(x + scale, y + scale, s, color & 0xFF000000u, scale);
@@ -85,6 +105,7 @@ void vcpe_hud_printf(float x, float y, uint32_t color, const char *fmt, ...)
     vcpe_hud_text(x, y, buf, color, 1);
 }
 
+/* Monospaced: the widest line's character count times 8 pixels. */
 float vcpe_hud_text_width(const char *s, float scale)
 {
     int best = 0, n = 0;
@@ -96,6 +117,8 @@ float vcpe_hud_text_width(const char *s, float scale)
 }
 
 /* ------------------------------------------------------------------ perf overlay */
+/* Perf overlay. The game wraps its update in vcpe_perf_update_begin/end (several times a frame if it runs several
+ * fixed steps); the times add up per shown frame. */
 int vcpe_stat_update_us;
 static SceInt64 upd_t0;
 static int upd_acc, heap_kb, heap_age, last_quads, quads_n;
@@ -104,6 +127,8 @@ static int last_quads_n(void) { return quads_n; }
 void vcpe_perf_update_begin(void) { upd_t0 = sceKernelGetSystemTimeWide(); }
 void vcpe_perf_update_end(void) { upd_acc += (int)(sceKernelGetSystemTimeWide() - upd_t0); }
 
+/* Counters like vcpe_stat_quads are reset by games on their own schedule; "share" turns a running total into this
+ * frame's part of it. */
 static int detail, last_binds, last_misses, frame_binds, frame_misses;
 static float last_area, frame_area;
 void vcpe_hud_perf_detail(int on) { detail = on; }
@@ -116,6 +141,7 @@ static int share(int now, int *last)
     return d < 0 ? now : d;
 }
 
+/* The standard one-line perf report for log files, the same format in every game. */
 int vcpe_perf_line(char *out, int n)
 {
     return snprintf(out, n, "perf %d fps upd %d.%d build %d.%d ge %d.%d ms, %d draws %d binds %d quads %d.%d screens, "
@@ -126,9 +152,13 @@ int vcpe_perf_line(char *out, int n)
                     vcpe_stat_vblank_misses, vcpe_stat_dlist_kb);
 }
 
+/* Draw the overlay at the bottom of the screen: FPS, update ms, draw ms (CPU building the list + waiting for the GE),
+ * draw calls, quads, and the largest free heap block (re-measured twice a second, the probe is not free). */
 void vcpe_hud_perf(void)
 {
     /* smooth the update time over frames (this is called once per shown frame) */
+    /* Exponential smoothing: move 1/8 of the way to the new value, so the number is readable instead of flickering.
+     */
     vcpe_stat_update_us += (upd_acc - vcpe_stat_update_us) / 8;
     upd_acc = 0;
     if (heap_age-- <= 0) {   /* the heap probe allocates: twice a second is plenty */
@@ -149,6 +179,7 @@ void vcpe_hud_perf(void)
              vcpe_stat_update_us / 1000, vcpe_stat_update_us / 100 % 10, vcpe_stat_build_us / 1000,
              vcpe_stat_build_us / 100 % 10, vcpe_stat_gpu_wait_us / 1000, vcpe_stat_gpu_wait_us / 100 % 10,
              vcpe_stat_draws, q, heap_kb);
+    /* The optional second line: GE time, texture binds, overdraw in screens, late vblanks, display list use. */
     if (detail) {
         static int late_age;
         if (frame_misses)
@@ -168,6 +199,8 @@ void vcpe_hud_perf(void)
 }
 
 /* ------------------------------------------------------------------ button icons */
+/* Fill a convex polygon with one triangle strip by zig-zagging between the two ends of the point list (0, 1, n-1, 2,
+ * n-2, ...): every consecutive triple is then a triangle inside the polygon. */
 static void convex(const float *pts, int n, uint32_t color)
 {
     /* convex polygon as a strip: 0, 1, n-1, 2, n-2, ... */
@@ -183,6 +216,7 @@ static void convex(const float *pts, int n, uint32_t color)
     vcpe_strip(xy, c, k, 0);
 }
 
+/* A filled circle as a polygon; more sides for bigger circles. */
 static void disc(float cx, float cy, float r, uint32_t color)
 {
     float p[48];
@@ -194,6 +228,7 @@ static void disc(float cx, float cy, float r, uint32_t color)
     convex(p, n, color);
 }
 
+/* A circle outline: a strip alternating between the outer and the inner radius. */
 static void ring(float cx, float cy, float r, float w, uint32_t color)
 {
     float xy[2 * 50];
@@ -207,6 +242,7 @@ static void ring(float cx, float cy, float r, float w, uint32_t color)
     vcpe_strip(xy, c, k, 0);
 }
 
+/* A thick line as a 4-vertex strip: the segment pushed out by half the width on both sides (along its normal). */
 static void line(float x0, float y0, float x1, float y1, float w, uint32_t color)
 {
     float dx = x1 - x0, dy = y1 - y0, l = vcpe_sqrt(dx * dx + dy * dy);
@@ -217,6 +253,7 @@ static void line(float x0, float y0, float x1, float y1, float w, uint32_t color
     vcpe_strip(xy, c, 4, 0);
 }
 
+/* Pack a colour the GE way: 0xAABBGGRR. */
 static uint32_t rgba(int r, int g, int b, int a) { return (uint32_t)r | (uint32_t)g << 8 | (uint32_t)b << 16 | (uint32_t)a << 24; }
 
 static const char *badge_label(int btn)
@@ -233,6 +270,7 @@ float vcpe_hud_button_width(int btn, float r)
     return 2 * r;
 }
 
+/* L, R, START and SELECT are drawn as rounded badges with their name in the 8x8 font. */
 static float badge(const char *label, float cx, float cy, float r, int alpha)
 {
     float s = badge_scale(r), tw = vcpe_hud_text_width(label, s), w = tw + 2 * r * 0.8f, h = 2 * r;
@@ -244,6 +282,7 @@ static float badge(const char *label, float cx, float cy, float r, int alpha)
     return w;
 }
 
+/* Draw one PSP button icon in the PlayStation colours (green triangle, red circle, blue cross, pink square). */
 float vcpe_hud_button(int btn, float cx, float cy, float r, int alpha)
 {
     if (alpha <= 0) return 0;
@@ -293,6 +332,7 @@ float vcpe_hud_button(int btn, float cx, float cy, float r, int alpha)
     return 2 * r;
 }
 
+/* Icon followed by a label, e.g. "(X) JUMP"; returns the width so prompts can be laid out in a row. */
 float vcpe_hud_prompt(float x, float y, int btn, const char *label, uint32_t color)
 {
     float r = 6, w = vcpe_hud_button_width(btn, r);

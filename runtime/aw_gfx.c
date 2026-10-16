@@ -21,6 +21,16 @@ typedef struct {
     uint32_t nglyphs, fontsets, glyphs, pages, clut, ntext, text, nstatic, statics, kit;
     char name[28];
 } LangHdr;
+/* HOW THIS FILE WORKS
+ *
+ * The 2D runtime's drawing layer on top of vcpe_gfx. Sprites are converted Unity sprites: each is one or more pieces
+ * on texture pages grouped in bundles (bundle 0 = shared, bundle 1 + n = scene n). Sprites are drawn as affine quads:
+ * the runtime passes a 2x2 matrix (A B / C D) and a translation, so rotation, scale and flips all come from the
+ * object's transform.
+ *
+ * Text uses glyph pages from the language data (LANG.PAK, or the English copy built into the data PAK): font sets
+ * (face + pixel size), glyphs, text files and a table translating the scene's original strings. Switching language
+ * loads another LANG block; text pointers into the old one are dropped first (txt_reset). */
 static uint8_t *lang;
 static const FontSet *fsets;
 static const Glyph *glyphs;
@@ -31,6 +41,7 @@ static int cur_scene = -1;
 
 
 
+/* Thin wrappers over vcpe_gfx, so the runtime's calls stay the same. */
 int gfx_init(void)
 {
     vcpe_gfx_tables((const VcpePage *)g_pages, (const VcpeBundle *)g_bundles, NUM_BUNDLES);
@@ -71,6 +82,8 @@ int gfx_pak_open(const char *path)
     return vcpe_bundle_load(0);
 }
 
+/* Check a language block before using it: magic, version, and that it was made for this build (kit id, number of
+ * font sets and text files) and its tables lie inside the block. */
 static int lang_ok(const uint8_t *m, uint32_t size)
 {
     const LangHdr *h = (const LangHdr *)m;
@@ -82,6 +95,7 @@ static int lang_ok(const uint8_t *m, uint32_t size)
 static char lang_path[300], lang_file[28];
 static int lang_file_ok = -1;
 
+/* Load the translation from LANG.PAK next to the EBOOT, or the built-in English. */
 int gfx_lang_load(const char *path, int use_file)
 {
     uint8_t *m = 0;
@@ -152,6 +166,7 @@ const char *lang_text(int f, uint32_t *size, uint32_t *nlines)
 }
 
 /* translation of a string baked into a scene, or the string itself */
+/* A scene string in the current language (falls back to the original text). */
 const char *lang_static(const char *orig)
 {
     const LangHdr *h = (const LangHdr *)lang;
@@ -181,6 +196,7 @@ static void locs_apply(int bundle)
     }
 }
 
+/* Before a scene: keep bundle 0 and load the scene's own bundle, unloading the previous scene's. */
 int gfx_scene_textures(int scene)
 {
     if (scene == cur_scene)
@@ -213,6 +229,9 @@ static void set_mode(int flags)
     vcpe_tex_white((flags & GFXF_WHITE) ? 1 : 0);
 }
 
+/* Draw a sprite with matrix (A B / C D) and translation (TX, TY). Without rotation each piece is a plain quad (at
+ * scale 1 snapped to whole pixels with nearest filtering, so pixel art stays crisp); with rotation its four
+ * corners go through the matrix and are drawn as a triangle strip. */
 void gfx_sprite_affine(int spr, float A, float B, float C, float D, float TX, float TY, uint32_t color, int flags)
 {
     if (!gfx_sprite_ok(spr) || (color >> 24) == 0)
@@ -258,6 +277,7 @@ void gfx_sprite_affine(int spr, float A, float B, float C, float D, float TX, fl
 
 /* Tilemap tile: only the sprite's own rect is drawn, at its exact (fractional) size and position,
    so neighbouring tiles share their edges instead of overlapping by a soft fringe. */
+/* Axis-aligned sprite (tiles): only scale and position, drawn as a plain quad. */
 void gfx_sprite_tile(int spr, float A, float D, float TX, float TY, uint32_t color)
 {
     if (!gfx_sprite_ok(spr) || (color >> 24) == 0)
@@ -317,6 +337,7 @@ void gfx_clip(int x, int y, int w, int h) { vcpe_clip(x, y, w, h); }
 void gfx_clip_reset(void) { vcpe_clip_reset(); }
 
 /* ------------------------------------------------------------------ text */
+/* Text drawing: UTF-8 decoding, glyph lookup by binary search, widths and aligned lines. */
 uint32_t utf8_next(const char **ps)
 {
     const unsigned char *s = (const unsigned char *)*ps;

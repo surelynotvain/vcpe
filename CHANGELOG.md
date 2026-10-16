@@ -1,5 +1,79 @@
 # VCPE changelog
 
+## 4.7 (2026-10-16): automatic budgets, runtime optimization and loading
+
+- Collision broadphase preserves contact order and state in the deterministic fixture while reducing candidate checks.
+- Cached world transforms and render ordering skip unchanged work; bounds remain conservative under rotation/mirroring.
+- Unused component kinds avoid generic prefab reserves; explicit budgets, shared prefab remaps and a stable-address
+  paged record store reduce allocations while preserving existing component interfaces.
+- TTF allocates its second 256 KiB glyph page on demand and removes 80 KiB of static rebuild scratch.
+- Async packs notify duplicate requesters only when data is ready; waiters and generation/overflow failures are
+  bounded and tested. Worker startup wakes jobs already queued. Optional prefetch predicts and pins bounded assets.
+- `vcpe_diag` reports frame average/p95/p99/worst, CPU/GPU-wait/I/O/audio pressure and per-module allocation failures.
+  Adaptation distinguishes CPU/I/O/audio pressure from rendering pressure before reducing cosmetic detail.
+- Optional `vcpe_stream` (4.5 iteration) supports simultaneous ADPCM music/ambience channels, intro/loop samples,
+  pitch, fades and resume positions. `vcpe_save_*_var` supports variable-size checked local payloads.
+- Includes the 4.1 tools below and a standalone Blank Engine with ADAPT/BENCH demonstrations.
+- Public snapshot includes engine-only host and PSP self-tests with portable paths. Hardware behavior and full-game
+  regressions for the complete 4.7 snapshot remain unverified; see `docs/upgrading-to-4.7.md`.
+
+Memory and adaptation changes:
+
+- New optional `vcpe_adapt`: automatic frame/memory budgeting, gradual cosmetic particle/trail and mesh LOD scaling,
+  slow quality recovery, cold-page reclamation, and cooperative micro work during play and loading.
+  Existing games keep full detail until they link and enable it. Blank Engine has a live ADAPT page and demo.
+- Runtime particle pools and trail histories track instantiated components instead of the world's unused prefab
+  reserve. Live histories survive growth; failed allocations leave existing effects and draw-list storage valid.
+  Particle playback and the default 48 particles / 24 trail points are unchanged; both limits can be configured.
+- Particle playback flags use a byte mask; effect/draw-list byte counts and allocation-failure counters are exposed
+  in `w_render.h`. Same-size particle resets reuse their block. Empty particle scenes allocate nothing.
+- Graphics batches share storage for textured and solid vertices: 16 KiB less BSS with the default batch size.
+- Fixed-size save validation uses 512-byte chunks: writes drop their full-size scratch allocation; reads use one
+  save-sized temporary instead of two. Existing save format, CRC checks and two-slot selection are preserved.
+- Arena allocations align the actual address of caller-supplied memory and reject invalid alignment/overflow.
+- See `docs/memory-optimizations.md` for measurements, tradeoffs and repeatable host checks.
+- See `docs/adaptive-budgets.md` for automatic tuning, thresholds, loading work and diagnostics.
+
+## 4.1 (2026-10-15): ultra tools, and the engine explained in its own source
+
+- New module `vcpe_ultra` (opt-in; docs/ultra-tools.md):
+  - **Event bus** between the engine and the game: `vcpe_ev_post` / `vcpe_ev_on` / `vcpe_ev_dispatch`, fixed
+    queues, in-order delivery on the main thread, a lock-free ring for posts from another thread. The engine's
+    own events: resume after sleep, loading screen begin/end, late frame (missed vblank), low memory, blackboard and
+    tuning changes.
+  - **Blackboard**: named int/float/string values shared by the engine, the game and test scripts, with change
+    events and a dump.
+  - **Live tuning**: registered variables follow a `name = value` text file (TUNE.TXT, or `host0:` over PSPLink),
+    re-read when it changes, clamped to their range; `vcpe_tune_save` writes the current values.
+  - **Toolkit**: FNV-1a hashes, 16.16 fixed point, ring buffer, O(1) object pool, drift-free timers, a profiler
+    with named scopes.
+  - Autotest commands `tune`, `bb`, `bbcheck`, `ev`. Host test `tests/host/ultra_test.c` (20 checks) and 3 self-test
+    checks on the PSP.
+- New module `vcpe_jobs` (docs/reservations-and-packs.md): reservations for background work. Clients (engine
+  modules, game systems) book reservations in one line; servers (worker threads) hand them out by automatic
+  priority (client priority + urgency + waiting time); done callbacks run on the main thread. Without servers the
+  main thread serves them within a time budget per frame.
+- New module `vcpe_pack` + `tools/vcpe_packer.py`: compact loading. Asset packs load with one read into slots of a
+  fixed pool and unload instantly; when the pool is full the priority list evicts the lowest-priority, least
+  recently used pack (pinned and loading packs stay). Background loads go through a reservation.
+- Blank Engine (`blank/`, docs/blank-engine.md): the engine compiled with no game, a UI over the engine picture
+  with technical information and live demos of the reservations (3 at once, 2 clients, 2 servers) and the ultra
+  tools.
+- `vcpe_pak_path()`.
+- New module `vcpe_lod` + `tools/vcpe_lod.py` (docs/lod.md): LOD meshes. Offline, triangles are joined by
+  quadric half-edge collapses into up to 8 levels that share one vertex array (each level a prefix), with a
+  measured error per level; seams and open edges stay put. At runtime `vcpe_lod_pick` turns that error into pixels
+  for the current camera and picks the coarsest level under the threshold (1 px by default), with hysteresis.
+  `vcpe_3d_lod_view` / `vcpe_3d_draw_lod` in `vcpe_3d`; stats `vcpe_lod_stat_full` / `_drawn`. The module has no PSP
+  headers (first piece of the move away from PSPSDK: only `vcpe_3d` talks to the GPU). Host test
+  `tests/host/lod_test.sh` (17 checks + 2 tool checks); self-test scene 3 compares a LOD frame with full detail.
+- Host test `tests/host/jobs_pack_test.sh` (20 checks, real threads); self-test checks on the PSP.
+- Comments: every module of `src/` and `runtime/` now explains how it works for someone new to the PSP (the GE and
+  display lists, the texture cache, IMA-ADPCM, coroutine hand-over, the LRU page cache, Unity's update order...),
+  about 1,000 lines. Code unchanged: every engine object file is byte-identical to 4.0 and every file's code
+  matches token for token.
+- The 4.1 development recordings matched 4.0 apart from wall-clock-driven frames.
+
 ## 4.0 (2026-10-15): smoothness, memory and robustness
 
 An engine review (smoothness, audio, threads, memory, robustness) checked against the code. docs/upgrading-to-4.0.md

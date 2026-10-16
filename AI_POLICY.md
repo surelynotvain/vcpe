@@ -50,7 +50,7 @@ AI-written code is held to the same gates as any other change, and they are deli
 ## 6. Provenance
 - The engine contains no game data and no code copied from any game. Games that use VCPE supply their own
   content.
-- The two pictures in `engineassets/` are third-party images (see `LICENSE`, section 9).
+- The images in `engineassets/` are third-party material (see `LICENSE`, section 9).
 - AI assistants are asked to write original code. If you recognise material in VCPE that appears to be copied
   from somewhere else, open an issue and it will be checked and removed if needed.
 

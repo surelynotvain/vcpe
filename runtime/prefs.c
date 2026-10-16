@@ -14,6 +14,7 @@ static int dirty;
 
 #define MAGIC 0x31505741   /* "AWP1" */
 
+/* Unity's PlayerPrefs: a small key/value table loaded once from SETTINGS.BIN and saved whole on every change. */
 void prefs_load(const char *file)
 {
     snprintf(path, sizeof path, "%s", file);
@@ -46,6 +47,7 @@ void prefs_save(void)
     dirty = 0;
 }
 
+/* Find a key (linear search: there are only a few), creating it if asked. */
 static Pref *find(const char *key, int create)
 {
     for (int i = 0; i < nprefs; i++)

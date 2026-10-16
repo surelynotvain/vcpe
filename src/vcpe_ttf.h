@@ -35,6 +35,8 @@ float vcpe_ttf_draw(VcpeTtf *f, float px, float x, float y, const char *s, uint3
 int vcpe_ttf_prewarm(VcpeTtf *f, float px, const char *chars);
 /* forget every cached glyph (both pages are cleared at the next use) */
 void vcpe_ttf_cache_reset(void);
+/* Allocated atlas texels, excluding lookup tables: initially 0, then 256 KiB, up to 512 KiB. */
+uint32_t vcpe_ttf_resident_bytes(void);
 
 extern int vcpe_stat_ttf_raster;   /* glyphs rasterized since the last vcpe_ttf_stat_reset (cache misses) */
 void vcpe_ttf_stat_reset(void);

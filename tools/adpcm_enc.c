@@ -20,6 +20,9 @@ static const int index_table[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 
 
 typedef struct { int pred, index; } State;
 
+/* Encode one sample: the 4-bit code says how far the sample is from the prediction, in steps of the current step size
+ * (bit 3 = sign, bits 2-0 = step, step/2, step/4). The encoder then updates its prediction exactly as the decoder
+ * will (same arithmetic, same clamping), so both stay in sync. */
 static int encode_one(State *s, int sample)
 {
     int step = step_table[s->index];
@@ -41,6 +44,7 @@ static int encode_one(State *s, int sample)
     return code;
 }
 
+/* Read all PCM from stdin (growing the buffer), then write blocks of 1024 samples per channel. */
 int main(int argc, char **argv)
 {
     int ch = argc > 1 ? atoi(argv[1]) : 1;
@@ -56,6 +60,8 @@ int main(int argc, char **argv)
     uint8_t nib[2][ADPCM_BLOCK / 2];
     for (size_t f0 = 0; f0 < frames; f0 += ADPCM_BLOCK) {
         for (int c = 0; c < ch; c++) {
+            /* Block header per channel: the predictor and step index at the start of the block, so the decoder can
+             * start at any block. */
             int16_t p = (int16_t)st[c].pred;
             fwrite(&p, 2, 1, stdout);
             uint8_t hdr[2] = {(uint8_t)st[c].index, 0};

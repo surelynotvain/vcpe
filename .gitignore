@@ -1,2 +1,12 @@
 __pycache__/
 *.py[cod]
+*.o
+*.d
+*.elf
+*.prx
+EBOOT.PBP
+PARAM.SFO
+/blank/vcpe_obj/
+/tests/selftest/vcpe_obj/
+/tests/selftest/build/
+/tests/selftest/out/

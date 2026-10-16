@@ -19,6 +19,8 @@ def xform(s):
     return m
 
 
+# Nodes come in tree order (a parent before its children), so each world matrix is its parent's world matrix times its
+# own local one, in one pass.
 def world_transforms(sc):
     """node path ('.'-relative, like Godot's parent paths) -> 4x4 world matrix"""
     W = {}
@@ -33,6 +35,7 @@ def world_transforms(sc):
     return W
 
 
+# Godot's default rotation order: Y, then X, then Z (the same order the engine's vcpe_node3d uses).
 def euler_deg_to_basis(rx, ry, rz):
     """Godot YXZ euler (degrees) -> 3x3"""
     x, y, z = map(math.radians, (rx, ry, rz))

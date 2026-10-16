@@ -10,10 +10,14 @@ import struct
 import time
 
 
+# Pad to a multiple of n bytes.
 def align(b, n=64):
     return b + b'\0' * (-len(b) % n)
 
 
+# Write the PAK and its C header. Every section starts on a 64-byte boundary; offsets count from the start of the
+# file, after the 64-byte header. The stamp (a timestamp by default) is written into both files, so the EBOOT can tell
+# a PAK from another build.
 def write_pak(pak_path, header_path, sections, magic=b'GPAK', stamp=None, prefix='PAK'):
     """sections: [(name, bytes)]; returns {name: (offset, size)}"""
     stamp = (int(time.time()) & 0x7fffffff) if stamp is None else stamp

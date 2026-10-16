@@ -10,6 +10,7 @@ Every IDR group of pictures is a chunk that starts on a pack boundary with a pri
 frame size table, followed by video PES packets; leftover pack space becomes a padding PES."""
 import re, struct, sys
 
+# MPEG timing runs on a 90 kHz clock: 90000 / 29.97 = 3003 ticks per frame.
 TICK = 3003            # 90 kHz ticks per frame at 29.97 fps
 PTS0 = 90000
 PACK = 2048
@@ -25,6 +26,8 @@ def be16(v): return struct.pack(">H", v)
 def be32(v): return struct.pack(">I", v)
 
 
+# Cut the H.264 byte stream into access units (one per frame) at the access unit delimiters (NAL type 9), dropping
+# filler (12) and the encoder's user-data SEI; type 5 marks an IDR (key) frame.
 def access_units(es):
     """Split at AUDs; drop filler NALs and the encoder's user-data SEI. -> [(bytes, is_idr)]"""
     marks = [m.start() for m in re.finditer(b"\x00\x00\x01", es)]
@@ -50,6 +53,7 @@ def access_units(es):
     return aus
 
 
+# MPEG-2 33-bit timestamps (PTS/DTS) are split over 5 bytes with marker bits in between.
 def ts33(prefix, v):
     return bytes([prefix | ((v >> 29) & 0x0E) | 1, (v >> 22) & 0xFF, ((v >> 14) & 0xFE) | 1,
                   (v >> 7) & 0xFF, ((v << 1) & 0xFE) | 1])
@@ -72,6 +76,8 @@ def size_table(sizes, first):
     return bytes(out)
 
 
+# Build the PMF: Sony's PSMF header, then 2048-byte program-stream packs. Each group of pictures starts a new pack
+# with a table of its frame sizes, then the video data in PES packets; unused space is filled with a padding packet.
 def mux(aus):
     chunks = []
     for i, (_, idr) in enumerate(aus):
@@ -161,6 +167,7 @@ def mux(aus):
     return bytes(hdr) + bytes(stream), len(chunks)
 
 
+# The reverse, to check a file: extract the H.264 stream from a PMF.
 def demux(pmf):
     """Video elementary stream back out of the packs (self-check)."""
     out, s = bytearray(), pmf[0x800:]
