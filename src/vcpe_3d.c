@@ -367,13 +367,15 @@ void vcpe_3d_draw_lod(int page, const VcpeLodMesh *m, int level)
 }
 
 /* Skinned mesh: one level of every submesh over this frame's skinned vertices (CPU-written, so never prepared for the
- * cull cache: the caller culls the whole character with its bounding sphere). */
+ * cull cache: the caller culls the whole character with its bounding sphere). The CPU wrote those vertices through
+ * the data cache and the GE reads RAM, so the used prefix is written back first. */
 void vcpe_3d_draw_skinned(const struct VcpeSkinMesh *m, int level, const void *verts)
 {
     if (!m || !verts || m->nlevels < 1)
         return;
     if (level < 0) level = 0;
     if (level >= m->nlevels) level = m->nlevels - 1;
+    sceKernelDcacheWritebackRange(verts, (unsigned)m->levels[level].nverts * sizeof(VcpeVtx));
     for (int s = 0; s < m->nsubs; s++)
         if (m->subs[s].nidx[level])
             vcpe_3d_draw(m->subs[s].page, verts, vcpe_skinmesh_idx(m, s, level), (int)m->subs[s].nidx[level]);

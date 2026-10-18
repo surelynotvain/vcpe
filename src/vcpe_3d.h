@@ -41,7 +41,8 @@ void vcpe_3d_lod_view(VcpeLodView *v, float thresh_px);
 void vcpe_3d_draw_lod(int page, const VcpeLodMesh *m, int level);
 
 /* 5.2: skinned meshes (vcpe_rig.h): every submesh of one level, drawn over skinned output vertices with the current
- * model matrix. Only the type comes from vcpe_rig.h, so linking vcpe_3d does not pull in vcpe_rig. */
+ * model matrix (their data cache lines are written back first). Only the type comes from vcpe_rig.h, so linking
+ * vcpe_3d does not pull in vcpe_rig. */
 struct VcpeSkinMesh;
 void vcpe_3d_draw_skinned(const struct VcpeSkinMesh *m, int level, const void *verts);
 
