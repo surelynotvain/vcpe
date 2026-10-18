@@ -23,6 +23,7 @@
 #define VCPE_CULL_WEAK
 #include "vcpe_3d.h"
 #undef VCPE_CULL_WEAK
+#include "vcpe_rig.h"
 
 #define BUF_W 512
 #define FB_SIZE (BUF_W * VCPE_SCR_H * 4)
@@ -363,4 +364,17 @@ void vcpe_3d_draw_lod(int page, const VcpeLodMesh *m, int level)
     vcpe_lod_stat_full += (int)m->lv[0].nidx / 3;
     vcpe_lod_stat_drawn += vcpe_lod_nidx(m, level) / 3;
     vcpe_3d_draw(page, m->verts, vcpe_lod_idx(m, level), vcpe_lod_nidx(m, level));
+}
+
+/* Skinned mesh: one level of every submesh over this frame's skinned vertices (CPU-written, so never prepared for the
+ * cull cache: the caller culls the whole character with its bounding sphere). */
+void vcpe_3d_draw_skinned(const struct VcpeSkinMesh *m, int level, const void *verts)
+{
+    if (!m || !verts || m->nlevels < 1)
+        return;
+    if (level < 0) level = 0;
+    if (level >= m->nlevels) level = m->nlevels - 1;
+    for (int s = 0; s < m->nsubs; s++)
+        if (m->subs[s].nidx[level])
+            vcpe_3d_draw(m->subs[s].page, verts, vcpe_skinmesh_idx(m, s, level), (int)m->subs[s].nidx[level]);
 }
