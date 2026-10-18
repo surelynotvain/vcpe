@@ -1,0 +1,11 @@
+EBOOT.PBP
+PARAM.SFO
+*.elf
+*.prx
+*.log
+src/*.o
+src/*.d
+src/assets.h
+vcpe_obj/
+generated/
+evidence/

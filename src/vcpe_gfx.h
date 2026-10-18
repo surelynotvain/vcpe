@@ -56,6 +56,9 @@ void vcpe_gfx_bench(int frames);
  * dropped and counted in vcpe_stat_dlist_full instead of writing past the list. Size the list with
  * -DVCPE_DLIST_KB=n (default 512); vcpe_stat_dlist_peak_kb shows what a game really uses */
 void *vcpe_gfx_mem(int size);
+/* Raw GU modules must also reserve command headroom before state/draw emission.
+ * Does not allocate; 0 increments dlist_full and the module skips that draw. */
+int vcpe_gfx_room(int command_bytes);
 
 /* texture bundles: a group of pages loaded from the PAK together */
 int vcpe_bundle_load(int b);

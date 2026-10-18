@@ -169,12 +169,17 @@ void vcpe_gfx_tables(const VcpePage *p, const VcpeBundle *b, int nb)
 /* Vertex memory for this frame. sceGuGetMemory reserves space inside the display list itself (the GE skips over it
  * with a jump command) and never checks the end of the list, so without this guard a very busy frame would write past
  * the list into other variables. */
-void *vcpe_gfx_mem(int size)
+int vcpe_gfx_room(int size)
 {
-    if (sceGuCheckList() + size + 8 > DLIST_BYTES - DLIST_RESERVE) {
+    if (size < 0 || sceGuCheckList() + size + 8 > DLIST_BYTES - DLIST_RESERVE) {
         vcpe_stat_dlist_full++;
         return 0;
     }
+    return 1;
+}
+void *vcpe_gfx_mem(int size)
+{
+    if (!vcpe_gfx_room(size)) return 0;
     return sceGuGetMemory(size);
 }
 

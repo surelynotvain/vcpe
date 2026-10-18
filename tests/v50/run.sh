@@ -10,7 +10,6 @@ sh "$V/tests/memory/run.sh" > "$OUT/memory.log" 2>&1
 sh "$V/tests/v47/run.sh" > "$OUT/v47.log" 2>&1
 python3 "$V/tests/native-data/run.py" > "$OUT/data.log" 2>&1
 python3 "$H/upgrade.py" > "$OUT/upgrade.log" 2>&1
-sh "$V/tests/culling/run.sh" > "$OUT/culling.log" 2>&1
 cc -O2 -Wall -Wextra -Wno-deprecated-declarations -ffunction-sections -fdata-sections \
     -I"$V/tests/memory/stubs" -I"$V/src" "$H/volatile.c" "$V/src/vcpe_mem.c" \
     -Wl,--gc-sections -o "$OUT/volatile-test"

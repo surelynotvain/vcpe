@@ -25,7 +25,11 @@ END = '# END VCPE EASY UPGRADE'
 BASE = 'vcpe_sys vcpe_pak vcpe_gfx vcpe_test vcpe_hud vcpe_math vcpe_mem vcpe_load vcpe_log'.split()
 DEPS = {'vcpe_savedata': ['vcpe_save'], 'vcpe_prefetch': ['vcpe_pack', 'vcpe_jobs'],
         'vcpe_pack': ['vcpe_jobs'], 'vcpe_node3d': ['vcpe_3d'], 'vcpe_3d': ['vcpe_lod', 'vcpe_cull'],
-        'vcpe_stream': ['vcpe_audio'], 'vcpe_spr': ['vcpe_math']}
+        'vcpe_stream': ['vcpe_audio'], 'vcpe_spr': ['vcpe_math'],
+        'vcpe_perspective': ['vcpe_math'], 'vcpe_raycast': ['vcpe_math'],
+        'vcpe_perspective_draw': ['vcpe_perspective', 'vcpe_gfx'], 'vcpe_skin': ['vcpe_math'],
+        'vcpe_path': ['vcpe_math'], 'vcpe_vehicle': ['vcpe_path', 'vcpe_math'], 'vcpe_backdrop': ['vcpe_3d'],
+        'vcpe_canvas': ['vcpe_spr', 'vcpe_gfx']}
 
 def atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)

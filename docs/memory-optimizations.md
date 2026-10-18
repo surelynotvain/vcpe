@@ -1,6 +1,7 @@
 # Engine memory review, 2026-10-16
 
-This review began against 4.1. Its memory and adaptation changes ship in 4.7; adopting the new engine remains an explicit per-game upgrade.
+These changes are in the active `vcpe` engine. Version snapshots and installed game builds are unchanged.
+These changes ship in VCPE 5.0; see `release-5.0.md` for verification and hardware limits.
 
 ## Changes and measured savings
 
@@ -76,12 +77,13 @@ game scenarios (532 captured frames) were byte-identical before/after. The PSP e
 batched/unbatched and pipelined frame comparisons. These are emulator and host results; physical PSP memory and
 frame-time measurements remain unverified.
 
-## Follow-up in 4.7
+## Remaining opportunities
 
-The 4.7 font cache removes the 80 KiB duplicate glyph table and allocates its second 256 KiB atlas page on demand.
-Unused component kinds no longer get the generic prefab reserve; explicit component budgets and a stable-address
-paged record store support smaller allocations. Shared prefab remaps reduce duplicate script allocations.
-See [upgrading-to-4.7.md](upgrading-to-4.7.md) for the runtime changes and their regression checks.
-
-Display-list capacity, texture-cache slots and audio block sizes remain workload-specific choices; test them with
-the game's assets rather than reducing their defaults globally.
+- `vcpe_ttf` retains an 80 KiB duplicate glyph table while rehashing. In-place deletion could remove it, but needs
+  font-page eviction and collision-chain stress tests before changing that cache.
+- Component definition arrays still reserve slots for prefab instances. Removing those reserves needs a wider
+  pointer-lifetime audit across scripts, animation and physics; it is separate from removing unused effect history.
+- A shared budget for active particles could save more in scenes with many idle emitters, but needs an explicit
+  exhaustion policy so one effect cannot silently steal another emitter's 48-particle allowance.
+- Texture-cache slot sizes, display-list capacity and audio buffers remain configurable budget decisions. Reducing
+  them globally without per-game workload measurements can cause reloads, full lists or audio underruns.

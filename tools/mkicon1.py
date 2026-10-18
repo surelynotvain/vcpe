@@ -85,7 +85,7 @@ def mux(aus):
             chunks.append([])
         chunks[-1].append(i)
     pts = [PTS0 + TICK * i for i in range(len(aus))]
-    stream, last_stamp = bytearray(), 0
+    stream = bytearray()
     for ci, chunk in enumerate(chunks):
         es = b"".join(aus[i][0] for i in chunk)
         starts, acc = [], 0
@@ -105,38 +105,35 @@ def mux(aus):
                 pack += b"\x00\x00\x01\xbf" + be16(len(tab)) + tab
                 room -= 6 + len(tab)
 
-            def au_in(n):   # first AU (index into chunk) that starts inside the next n payload bytes
-                return next((k for k, o in enumerate(starts) if pos <= o < pos + n), None)
-
-            # timestamps go on a chunk's first PES and whenever 16+ frames passed since the last
-            hl = 0
-            for _ in range(3):
-                n = min(len(es) - pos, room - 9 - hl)
-                k = au_in(n)
-                want = (13 if first else 10) if (first or (k is not None and chunk[k] >= last_stamp + 16)) else 0
-                if want == hl:
-                    break
-                hl = want
-            n = min(len(es) - pos, room - 9 - hl)
-            k = au_in(n)
-            fields, flags = b"", 0
-            if hl and k is not None:
-                p = pts[chunk[k]]
-                fields = ts33(0x30, p) + ts33(0x10, p - TICK)
-                flags = 0xC0
-                if hl == 13:
-                    fields += PSTD_EXT
-                    flags = 0xC1
-                last_stamp = chunk[k]
-            spare = room - 9 - hl - n
-            stuff = spare if 0 < spare < 6 else 0          # too small for a padding PES
-            hlen = hl + stuff
-            pack += (b"\x00\x00\x01\xe0" + be16(3 + hlen + n) + bytes([0x81, flags, hlen])
-                     + fields + b"\xff" * (hlen - len(fields)) + es[pos:pos + n])
-            pos += n
-            spare -= stuff
-            if spare:
-                pack += b"\x00\x00\x01\xbe" + be16(spare - 6) + b"\xff" * (spare - 6)
+            # A timestamp belongs to an access unit that STARTS at the PES
+            # payload boundary. Attaching the next AU's timestamp to a packet
+            # containing the tail of the previous AU gives duplicate frame PTS
+            # in demuxers. Use a small PES per AU; several fit in one pack.
+            while pos < len(es) and room >= 24:
+                k = next(k for k in range(len(starts) - 1, -1, -1) if starts[k] <= pos)
+                end = starts[k + 1] if k + 1 < len(starts) else len(es)
+                fields, flags = b"", 0
+                if pos == starts[k]:
+                    p = pts[chunk[k]]
+                    fields = ts33(0x30, p) + ts33(0x10, p - TICK)
+                    flags = 0xC0
+                    if first:
+                        fields += PSTD_EXT
+                        flags = 0xC1
+                n = min(end - pos, room - 9 - len(fields))
+                spare = room - 9 - len(fields) - n
+                # Leave enough room for another timestamped PES, or absorb a
+                # tiny tail as header stuffing / a padding packet.
+                stuff = spare if 0 < spare < 6 else 0
+                hlen = len(fields) + stuff
+                pack += (b"\x00\x00\x01\xe0" + be16(3 + hlen + n) + bytes([0x81, flags, hlen])
+                         + fields + b"\xff" * stuff + es[pos:pos + n])
+                pos += n
+                room -= 9 + hlen + n
+                first = False
+            if room:
+                assert room >= 6, room
+                pack += b"\x00\x00\x01\xbe" + be16(room - 6) + b"\xff" * (room - 6)
             assert len(pack) == PACK, len(pack)
             stream += pack
             first = False

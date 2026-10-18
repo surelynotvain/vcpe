@@ -11,6 +11,8 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
 void vcpe_3d_model(const float *m16);   /* row-major 4x4 model matrix for the next draws; 0 = identity */
 void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx);   /* page < 0: untextured */
 void vcpe_3d_fog(float start, float end, uint32_t color);
+void vcpe_3d_filter(int linear); /* opt-in smooth magnification + trilinear mip sampling */
+void vcpe_3d_material(int blend,int alpha_threshold); /* per-texel alpha; blended surfaces follow opaque ones */
 void vcpe_3d_add(float k);     /* next draws: added on top, k x their colour (a light layer over the same surfaces); vcpe_3d_alpha(1) ends it */
 void vcpe_3d_alpha(float a);   /* next draws: whole-object opacity (fixed blend factors); 1 = opaque */                         /* end <= start: off */
 void vcpe_3d_end(void);

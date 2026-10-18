@@ -1,12 +1,85 @@
 # VCPE changelog
 
+## 5.1 (2026-10-18): 3D skinning, vehicles, backdrops and profiling
+
+All engine work since 5.0 plus new generic modules. Existing games keep building: new modules are opt-in
+through `VCPE_MODULES`.
+
+- **Real 3D** (`vcpe_3d`, `vcpe_skin`): `vcpe_skin` four-weight CPU/VFPU skinning,
+  half/float clip interpolation and head aim (ASan/UBSan tests in `tests/skinning`). `vcpe_3d_filter` for smooth
+  magnification and trilinear mipmaps, `vcpe_3d_material` for per-batch alpha test/blend and depth writes.
+- **Display-list safety** (`vcpe_gfx`): `vcpe_gfx_room` reserves command headroom for raw GU modules; 3D material,
+  texture and draw submission check space and count drops instead of overrunning. A 128 KiB list overrun had
+  corrupted an adjacent audio hook during 3D camera turns; games can raise `VCPE_DLIST_KB` (512 for dense skinned scenes).
+- **Culling refinements** (`vcpe_cull`): dynamic skinned batches skip static refits.
+- **New `vcpe_path`**: arc-length Catmull-Rom sampling of marker/point chains with a stable heading.
+- **New `vcpe_vehicle`**: towed wagon/carriage rig: front axle on a path, rear axle trailing over the wheelbase
+  (tractrix), road-grade pitch, deterministic rut roll/heave scaled by speed, pause-safe tick updates, plus
+  `vcpe_matrix_ypr`/`vcpe_matrix_point` helpers. Host test `tests/vehicle`.
+- **New `vcpe_backdrop`**: long-range view faking. Camera-centred sky dome and two procedural snow-capped
+  ridge rings hazed toward the fog colour, drawn in their own depth pass before the world.
+- **New `vcpe_profile`**: buffered measurement windows (mean/p95/max) for cpu/ge/work/interval/draws plus up to
+  eight game metrics, printed to the test log; no file I/O inside measured frames.
+- **New `vcpe_canvas`**: optional zoomable logical 2D canvas over sprites/text/primitives.
+- **New `vcpe_offline`**: file-only EBOOTs no longer import sceNetInet through libcglue.
+- **PMF/ICON1 fix** (`tools/mkicon1.py`): each access unit starts its own PES with exact PTS/DTS; previously a
+  shared packet carried the next unit's timestamp and FFmpeg reported duplicate frame PTS. Tests in `tests/icon1`.
+- **Flat perspective, raycast and sector modules** (experimental, see below and `docs/flat-perspective.md`).
+- **RGSS runtime** (`rpg/`, `tools/rpgmaker/`) and **asset cook pipeline** (`cook/`, `src/ext/`): generic
+  RPG Maker VX Ace-style runtime and PC-side asset cooking. Third-party headers are listed in
+  `src/ext/VERSIONS.txt` (stb, minimp3: public domain/MIT/CC0).
+- Capture staging: screenshots/recordings stage rows through aligned RAM rather than passing VRAM to file I/O.
+- `tools/vcpe_upgrade.py` knows the new module dependencies. Loading credit reads "made with VCPE 5.1".
+
+Verification: host suites (skinning, culling, vehicle, icon1, capture, perspective, memory, v47, native data) and
+PSP builds of every new module pass. Emulator and host checks are not physical-PSP verification; the new 3D modules
+have not yet been timed on hardware.
+
+## Unreleased capture/manual-input repair (2026-10-17): Perspective Lite 1.02
+
+- Physical-card log completes frames 0/1; copied AUTOTEST.TXT disables manual
+  controls, then the first screenshot remains zero bytes. Preserve evidence;
+  the automated capture is the suspected stall point, not established overload.
+- Example diagnostics now require TESTMODE.ON or both boot triggers. Normal mode
+  ignores a stray script, shows a frame counter and a 650 ms standard loader.
+- Generic screenshot/recording output stages eight rows through transient aligned
+  RAM instead of passing VRAM to file I/O; short writes and errors are handled.
+- Host capture staging/sanitizer checks, manual-mode-with-stray-script smoke test,
+  native capture traversal and 5.0 savedata/loader regressions pass. Card install
+  is backed up and hash-checked. Updated physical execution remains pending.
+
+## Unreleased hardware investigation (2026-10-17): Perspective Lite 1.01
+
+- User reports physical PSP-3000 freeze after the original demo's scene appears;
+  cause unconfirmed. The replacement is not yet hardware-verified.
+- New generic `vcpe_raycast`: bounded 2D wall-strip projection and per-strip sprite
+  occlusion data. Example uses normal 2D sprites, a fixed 4 MiB heap, synchronous
+  drawing, 128 KiB display list, 4,448-byte scene scratch and 33 KiB shared T8 atlas.
+- FLAT.LOG records startup and first-frame submission/completion, then periodic
+  status. The demo no longer requests nearly all RAM or runs a large heap probe.
+- Card renderer adds fast corner outcodes, cached sort status and an optional
+  opaque/cutout mode. Default blending is preserved. Source-card A/B comparisons,
+  sanitizer tests and normal/32 MB emulator traversal/camera sweeps pass.
+- Existing game settings and 64 MB demake checks remain unchanged.
+
+## Unreleased local extension (2026-10-17): flat perspective scenes
+
+- Optional `vcpe_perspective` CPU card projection, six-plane clipping, bounded
+  triangle queue, deterministic painter ordering and multi-view sprite selection.
+- `vcpe_perspective_draw` submits 2D triangles, without a depth buffer or 3D matrices.
+- `vcpe_sector` adds bounded rectangular cells/portals, doors, radius collision,
+  wall sliding, step/headroom limits and conservative connectivity masks.
+- Generic standalone PSP example, host/sanitizer/GU contracts, six PPSSPP captures
+  and scripted traversal/camera soak. Existing 5.0 regression suite passes.
+- See `docs/flat-perspective.md` for budgets, content authoring constraints and
+  limits of painter sorting. No physical PSP performance claim or public release.
+
 ## 5.0 (2026-10-16): upgrades, native savedata, loading and runtime budgets
 
-- Camera culling: optional `vcpe_cull`, automatic geometry-derived batch/chunk bounds, conservative
+- Local camera-culling addition: optional `vcpe_cull`, automatic geometry-derived batch/chunk bounds, conservative
   camera/model plane tests, contiguous retained-range submission, current 3D label bounds, mutable LOD refits,
   a bounded heap cache, counters and A/B bypass. Generic 3D upgrades resolve the new optional dependency.
-  CPU contracts (including sanitizer/fast-math paths) and PSP builds are checked;
-  camera culling has no gameplay/performance acceptance yet.
+  CPU contracts (including sanitizer/fast-math paths) and PSP builds are checked; no game or emulator was launched.
   `docs/camera-culling.md` documents ownership/invalidation and pending visual/performance playtesting.
 
 - `vcpe_version.h` is the shared release version, also used by the loading credit and Blank Engine.
@@ -28,27 +101,8 @@
   `tests/v47` exercises ordering, contacts, state hashes, font coverage, allocation failures and real threads.
 - Blank Engine adds native SAVES controls, loader preview, savedata and benchmark autotests.
 - Upgrade/use instructions: `docs/upgrading-to-5.0.md`, `docs/savedata.md`, `docs/release-5.0.md`.
-- Public worker tests enqueue a complete batch before starting servers, synchronize observation of running jobs,
-  and isolate their generated PAKs in temporary directories instead of relying on fixed sleeps/shared paths.
 
-## 4.7 (2026-10-16): automatic budgets, runtime optimization and loading
-
-- Collision broadphase preserves contact order and state in the deterministic fixture while reducing candidate checks.
-- Cached world transforms and render ordering skip unchanged work; bounds remain conservative under rotation/mirroring.
-- Unused component kinds avoid generic prefab reserves; explicit budgets, shared prefab remaps and a stable-address
-  paged record store reduce allocations while preserving existing component interfaces.
-- TTF allocates its second 256 KiB glyph page on demand and removes 80 KiB of static rebuild scratch.
-- Async packs notify duplicate requesters only when data is ready; waiters and generation/overflow failures are
-  bounded and tested. Worker startup wakes jobs already queued. Optional prefetch predicts and pins bounded assets.
-- `vcpe_diag` reports frame average/p95/p99/worst, CPU/GPU-wait/I/O/audio pressure and per-module allocation failures.
-  Adaptation distinguishes CPU/I/O/audio pressure from rendering pressure before reducing cosmetic detail.
-- Optional `vcpe_stream` (4.5 iteration) supports simultaneous ADPCM music/ambience channels, intro/loop samples,
-  pitch, fades and resume positions. `vcpe_save_*_var` supports variable-size checked local payloads.
-- Includes the 4.1 tools below and a standalone Blank Engine with ADAPT/BENCH demonstrations.
-- Public snapshot includes engine-only host and PSP self-tests with portable paths. Hardware behavior and full-game
-  regressions for the complete 4.7 snapshot remain unverified; see `docs/upgrading-to-4.7.md`.
-
-Memory and adaptation changes:
+Memory and adaptation changes included in 5.0:
 
 - New optional `vcpe_adapt`: automatic frame/memory budgeting, gradual cosmetic particle/trail and mesh LOD scaling,
   slow quality recovery, cold-page reclamation, and cooperative micro work during play and loading.
@@ -103,7 +157,7 @@ Memory and adaptation changes:
   display lists, the texture cache, IMA-ADPCM, coroutine hand-over, the LRU page cache, Unity's update order...),
   about 1,000 lines. Code unchanged: every engine object file is byte-identical to 4.0 and every file's code
   matches token for token.
-- The 4.1 development recordings matched 4.0 apart from wall-clock-driven frames.
+- Every game's recordings are frame-identical to 4.0 (Breach's `os.time` frames aside).
 
 ## 4.0 (2026-10-15): smoothness, memory and robustness
 

@@ -5,7 +5,11 @@
 #include "../../src/vcpe_font.c"
 #include "../../src/vcpe_node3d.c"
 static int binds,draws,counts[32];static const uint16_t *index_ptr[32];
+int vcpe_stat_draws;
+static int command_room=1;
+int vcpe_gfx_room(int n){assert(n>0);return command_room;}
 void vcpe_gfx_flush(void){} int vcpe_bind_page(int page){(void)page;binds++;return 1;}
+void vcpe_gfx_state_reset(void){}
 void vcpe_unbind(void){} void vcpe_filter(int v){(void)v;}void vcpe_blend(int v){(void)v;}void vcpe_tex_white(int v){(void)v;}
 void vcpe_page_size(int p,int *w,int *h){(void)p;*w=*h=128;}
 void *vcpe_gfx_mem(int n){static VcpeVtx storage[256];assert(n<=(int)sizeof storage);return storage;}
@@ -59,6 +63,8 @@ int main(void)
     vcpe_3d_geometry_changed(v);clear_calls();vcpe_3d_draw(3,v,idx,120);assert(!draws && !binds);
     vcpe_3d_autocull(0);clear_calls();vcpe_3d_draw(3,v,idx,120);assert(draws==1 && counts[0]==120);
     vcpe_3d_autocull(1);vcpe_3d_cull_reset();clear_calls();vcpe_3d_draw(3,v,idx,120);assert(draws==1 && counts[0]==120);
+    command_room=0;clear_calls();vcpe_3d_draw(3,v,idx,120);assert(!draws&&!binds);
+    command_room=1;
     static const VcpeGlyph glyphs[]={{'A',0,0,8,10,-3,-2,9}};
     VcpeFont font={3,12,1,glyphs};
     model[3]=200;model[11]=-5;clear_calls();vcpe_font_draw3d(&font,model,"AA\nA",.1f,0xFFFFFFFF,1);
