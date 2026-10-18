@@ -37,4 +37,5 @@ python3 "$H/v50/upgrade.py"
     -I"$H/memory/stubs" -I"$V/src" "$H/v50/volatile.c" "$V/src/vcpe_mem.c" \
     -Wl,--gc-sections -o "$D/volatile"
 "$D/volatile"
+sh "$H/v52/run.sh"
 echo 'PASS VCPE 5.0 host suites'

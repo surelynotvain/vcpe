@@ -15,4 +15,10 @@ typedef struct {
 void vcpe_backdrop_defaults(VcpeBackdrop *b);   /* overcast northern sky */
 void vcpe_backdrop_build(const VcpeBackdrop *b);
 void vcpe_backdrop_draw(const float rot_deg[3], float fov_deg);   /* fog off, own depth clear */
+/* 5.2: new colours (haze, zenith, rock, snow) for the built geometry, e.g. every few seconds for a day cycle
+ * (vcpe_sky_backdrop fills them); the skyline (seed, height, layers) stays */
+void vcpe_backdrop_recolor(const VcpeBackdrop *b);
+/* 5.2, off by default: a sun or moon disc on the sky dome, behind the ridges. dir: toward it; size: degrees across;
+ * page: a round texture (-1: an untextured square); color ABGR with alpha (0: off) */
+void vcpe_backdrop_sun(const float dir[3], float size_deg, uint32_t color, int page);
 #endif
