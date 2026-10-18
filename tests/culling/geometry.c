@@ -53,6 +53,12 @@ int main(void)
         /* A point from the local sphere's support in the plane normal must not be falsely rejected. */
         float center[3]={0,0,0};float radius=2;
         int sphere=vcpe_cull_sphere_test(&local,center,radius);
+        VcpeCullPrepared prepared;vcpe_cull_prepare_planes(&prepared,&local);
+        assert(vcpe_cull_sphere_prepared(&prepared,center,radius)==sphere);
+        float invalid_center[3]={unusual(0x7fc00000),0,0};
+        assert(vcpe_cull_sphere_prepared(&prepared,invalid_center,radius));
+        assert(vcpe_cull_sphere_prepared(&prepared,center,-1));
+        VcpeCullPrepared invalid_prepared={0};assert(vcpe_cull_sphere_prepared(&invalid_prepared,center,radius));
         if(!sphere) {
             int outside=0;
             for(int p=0;p<6;p++) {

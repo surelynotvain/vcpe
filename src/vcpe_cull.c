@@ -111,6 +111,30 @@ int vcpe_cull_sphere_test(const VcpeCullPlanes *planes, const float c[3], float 
     }
     return 1;
 }
+/* Camera validation and normal lengths are invariant for a whole frame. Keep
+ * conservative boundary margins and invalid-object fail-open behavior. */
+void vcpe_cull_prepare_planes(VcpeCullPrepared *o,const VcpeCullPlanes *planes)
+{
+ memset(o,0,sizeof *o);
+ if(!planes||!planes->valid||!finite_array(&planes->p[0][0],24))return;
+ o->planes=*planes;
+ for(int i=0;i<6;i++){
+  const float *p=planes->p[i];o->normal_length[i]=sqrtf(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+  if(!finite_float(o->normal_length[i]))return;
+ }
+ o->valid=1;
+}
+int vcpe_cull_sphere_prepared(const VcpeCullPrepared *view,const float c[3],float radius)
+{
+ if(!view||!view->valid||!c||!finite_array(c,3)||!finite_float(radius)||radius<0)return 1;
+ for(int i=0;i<6;i++){
+  const float *p=view->planes.p[i];float d=p[0]*c[0]+p[1]*c[1]+p[2]*c[2]+p[3];
+  float r=radius*view->normal_length[i],e=margin(p,c,r);
+  if(!finite_float(d)||!finite_float(r)||!finite_float(e))return 1;
+  if(d+r < -e)return 0;
+ }
+ return 1;
+}
 static void box_finish(VcpeCullBox *b, const float lo[3], const float hi[3])
 {
     b->valid=1;

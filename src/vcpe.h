@@ -10,6 +10,7 @@
 #include "vcpe_test.h"
 #include "vcpe_gfx.h"
 #include "vcpe_3d.h"
+#include "vcpe_skin.h"
 #include "vcpe_lod.h"
 #include "vcpe_node3d.h"
 #include "vcpe_co.h"
@@ -35,4 +36,7 @@
 #include "vcpe_prefetch.h"
 #include "vcpe_diag.h"
 #include "vcpe_store.h"
+#include "vcpe_perspective.h"
+#include "vcpe_sector.h"
+#include "vcpe_raycast.h"
 #endif

@@ -34,7 +34,9 @@ int vcpe_stat_cull_tests, vcpe_stat_culled, vcpe_stat_cull_tris, vcpe_stat_cull_
 static int autocull = 1, active_3d;
 static const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
 static float model_matrix[16];
-static VcpeCullPlanes camera_planes;
+static VcpeCullPlanes camera_planes,draw_planes;
+static int draw_planes_ready;
+static VcpeCullPrepared prepared_camera;
 
 void vcpe_3d_autocull(int on) { autocull=on!=0; }
 int vcpe_3d_autocull_enabled(void) { return autocull; }
@@ -59,6 +61,7 @@ int vcpe_3d_visible_points(const void *v,uint32_t n,const float *model)
 int vcpe_lod_stat_full, vcpe_lod_stat_drawn;
 static float fog_start, fog_end;
 static uint32_t fog_color;
+static int material_blend=-1,material_threshold=-1;
 
 void vcpe_3d_fog(float start, float end, uint32_t color)
 {
@@ -67,6 +70,24 @@ void vcpe_3d_fog(float start, float end, uint32_t color)
     fog_color = color;
 }
 
+void vcpe_3d_filter(int linear)
+{
+    vcpe_gfx_flush();
+    sceGuTexFilter(linear ? GU_LINEAR_MIPMAP_LINEAR : GU_NEAREST_MIPMAP_NEAREST, linear ? GU_LINEAR : GU_NEAREST);
+    vcpe_gfx_state_reset();
+}
+void vcpe_3d_material(int blend,int threshold)
+{
+    if(material_blend==blend&&material_threshold==threshold)return;
+    vcpe_gfx_flush();
+    if(!vcpe_gfx_room(256))return;
+    if(blend){sceGuEnable(GU_BLEND);sceGuBlendFunc(GU_ADD,GU_SRC_ALPHA,GU_ONE_MINUS_SRC_ALPHA,0,0);sceGuDepthMask(GU_TRUE);}
+    else {sceGuDisable(GU_BLEND);sceGuDepthMask(GU_FALSE);}
+    if(threshold>0){sceGuEnable(GU_ALPHA_TEST);sceGuAlphaFunc(GU_GREATER,threshold,0xff);}
+    else sceGuDisable(GU_ALPHA_TEST);
+    material_blend=blend;material_threshold=threshold;
+    vcpe_gfx_state_reset();
+}
 /* view frustum of the current camera, for vcpe_3d_visible */
 /* The camera's frustum, kept on the CPU for culling: position, its right/up/forward axes, tan of half the field of
  * view (horizontal fr_th, vertical fr_tv), the matching sphere-margin factors and the near/far distances. */
@@ -98,6 +119,7 @@ int vcpe_3d_visible_local(const float c[3],float radius,const float *m)
  * not sent to the GE at all. */
 int vcpe_3d_visible(const float c[3], float r)
 {
+    if(vcpe_cull_sphere_prepared)return vcpe_cull_sphere_prepared(&prepared_camera,c,r);
     if(vcpe_cull_sphere_test)return vcpe_cull_sphere_test(&camera_planes,c,r);
     float d[3] = {c[0] - fr_pos[0], c[1] - fr_pos[1], c[2] - fr_pos[2]};
     float z = d[0] * fr_fwd[0] + d[1] * fr_fwd[1] + d[2] * fr_fwd[2];
@@ -128,6 +150,7 @@ int vcpe_3d_project(const float p[3], float *sx, float *sy)
  * of view. */
 void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, float znear, float zfar)
 {
+    material_blend=material_threshold=-1;draw_planes_ready=0;
     vcpe_gfx_flush();
     {
         const float k = GU_PI / 180.0f;
@@ -149,6 +172,7 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
     }
     camera_planes.valid=0;
     if(vcpe_cull_camera)vcpe_cull_camera(&camera_planes,fr_pos,fr_right,fr_up,fr_fwd,fr_th,fr_tv,fr_near,fr_far);
+    if(vcpe_cull_prepare_planes)vcpe_cull_prepare_planes(&prepared_camera,&camera_planes);
     memcpy(model_matrix,identity,sizeof model_matrix);active_3d=1;
     /* Depth: the PSP convention here is reversed (65535 = near, 0 = far), so the test is "greater or equal" and the
      * buffer is cleared to 0 (farthest). The depth mask is GU_FALSE, which on the GE means depth writes are ON. */
@@ -203,6 +227,7 @@ void vcpe_3d_begin(const float pos[3], const float rot_deg[3], float fov_deg, fl
 void vcpe_3d_model(const float *m)
 {
     memcpy(model_matrix,m?m:identity,sizeof model_matrix);
+    draw_planes_ready=0;
     vcpe_gfx_flush();
     sceGumMatrixMode(GU_MODEL);
     if (!m) {
@@ -216,9 +241,11 @@ void vcpe_3d_model(const float *m)
 
 static void submit(const void *verts,const uint16_t *idx,int nidx)
 {
+    if (!vcpe_gfx_room(512)) return;
     sceGumDrawArray(GU_TRIANGLES, GU_INDEX_16BIT | GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
                     nidx, idx, verts);
     vcpe_stat_tris+=nidx/3;
+    vcpe_stat_draws++;
 }
 
 /* Test the entire batch first; only intersecting batches need chunk tests. Consecutive retained chunks remain
@@ -235,7 +262,8 @@ void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
         mesh=vcpe_cull_find(verts,idx,(uint32_t)nidx);
         if(mesh) {
             vcpe_stat_cull_tests++;
-            vcpe_cull_local_planes(&local,&camera_planes,model_matrix);
+            if(!draw_planes_ready){vcpe_cull_local_planes(&draw_planes,&camera_planes,model_matrix);draw_planes_ready=1;}
+            local=draw_planes;
             classification=vcpe_cull_box_test(&local,vcpe_cull_bound(mesh));
             if(!classification) {vcpe_stat_culled++;vcpe_stat_cull_tris+=nidx/3;return;}
         }
@@ -249,6 +277,10 @@ void vcpe_3d_draw(int page, const void *verts, const uint16_t *idx, int nidx)
         if(first_visible==count) {vcpe_stat_culled++;return;}
     }
     vcpe_gfx_flush();
+    /* Matrix upload, CLUT, texture state and the first draw are command bytes,
+     * even when all geometry lives outside the list. Vertex guards alone do
+     * not protect a busy 3D scene from writing beyond the display list. */
+    if (!vcpe_gfx_room(1024)) return;
     if (page >= 0) {
         if (!vcpe_bind_page(page))
             return;

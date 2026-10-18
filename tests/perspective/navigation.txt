@@ -1,0 +1,30 @@
+wait 4
+expectrender
+snap courtyard
+status
+hold up 180
+expectcell 1
+snap hall
+status
+hold up 180
+expectblocked
+snap door
+status
+door 1
+hold up 100
+expectcell 2
+snap exit
+status
+camera 1.8 -5.7 70 0
+wait 2
+snap side
+status
+camera 0 -1 0 -40
+wait 2
+snap floor
+expectrender
+status
+sweep 1200
+expectrender
+status
+quit

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <malloc.h>
 #include "vcpe_sys.h"
 #include "vcpe_test.h"
 
@@ -139,15 +140,37 @@ void vcpe_test_step(unsigned *held)
     }
 }
 
-/* Copy the shown frame buffer row by row (its stride is 512 pixels, the file's 480) through the uncached address, so
- * what is saved is what is in VRAM. */
+/* Memory-stick drivers must receive an ordinary aligned RAM buffer. Passing a
+ * VRAM/uncached-display pointer directly to sceIoWrite can stall on real PSPs,
+ * while emulators accept it. Stage eight packed rows; allocate only for capture.
+ * Retry partial writes, stop on errors, and always free the transient buffer. */
+static int write_frame(int fd,const uint8_t *fb,int stride)
+{
+    const unsigned row_bytes=480*4,block_rows=8;
+    uint8_t *ram=memalign(64,row_bytes*block_rows);
+    if(!ram)return -1;
+    int result=0;
+    for(unsigned y=0;y<272 && !result;y+=block_rows) {
+        unsigned rows=272-y<block_rows?272-y:block_rows;
+        for(unsigned r=0;r<rows;r++)memcpy(ram+r*row_bytes,fb+(y+r)*(unsigned)stride*4,row_bytes);
+        unsigned size=rows*row_bytes,done=0;
+        while(done<size) {
+            int n=sceIoWrite(fd,ram+done,size-done);
+            if(n<=0 || (unsigned)n>size-done){result=-1;break;}
+            done+=(unsigned)n;
+        }
+    }
+    free(ram);return result;
+}
+
+/* Copy the shown VRAM image through uncached reads, then write from RAM. */
 void vcpe_test_snap(const char *name)
 {
     if (vcpe_present_hook)
         vcpe_present_hook();
-    void *top; int bw, pf;
-    sceDisplayGetFrameBuf(&top, &bw, &pf, PSP_DISPLAY_SETBUF_IMMEDIATE);
-    if (!top || bw <= 0 || pf != PSP_DISPLAY_PIXEL_FORMAT_8888)
+    void *top=0; int bw=0, pf=0;
+    if(sceDisplayGetFrameBuf(&top, &bw, &pf, PSP_DISPLAY_SETBUF_IMMEDIATE)<0 ||
+       !top || bw < 480 || bw > 2048 || pf != PSP_DISPLAY_PIXEL_FORMAT_8888)
         return;
     const uint8_t *fb = (const uint8_t *)((uintptr_t)top | 0x40000000);
     char f[64], p[300];
@@ -156,8 +179,7 @@ void vcpe_test_snap(const char *name)
     int fd = sceIoOpen(p, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (fd < 0)
         return;
-    for (int y = 0; y < 272; y++)
-        sceIoWrite(fd, fb + y * bw * 4, 480 * 4);
+    if(write_frame(fd,fb,bw)<0)printf("VCPE screenshot write failed: %s\n",f);
     sceIoClose(fd);
 }
 
@@ -167,10 +189,13 @@ void vcpe_test_frame_end(void)
     if (rec_fd >= 0 && ++rec_n % rec_every == 0) {
         if (vcpe_present_hook)
             vcpe_present_hook();   /* pipeline: show the frame just built before reading the screen */
-        void *top; int bw, pf;
-        sceDisplayGetFrameBuf(&top, &bw, &pf, PSP_DISPLAY_SETBUF_IMMEDIATE);
+        void *top=0; int bw=0, pf=0;
+        int ok=sceDisplayGetFrameBuf(&top,&bw,&pf,PSP_DISPLAY_SETBUF_IMMEDIATE)>=0 && top &&
+            bw>=480 && bw<=2048 && pf==PSP_DISPLAY_PIXEL_FORMAT_8888;
         const uint8_t *fb = (const uint8_t *)((uintptr_t)top | 0x40000000);
-        for (int y = 0; y < 272; y++)
-            sceIoWrite(rec_fd, fb + y * bw * 4, 480 * 4);
+        if(!ok || write_frame(rec_fd,fb,bw)<0) {
+            printf("VCPE recording stopped: framebuffer/write error\n");
+            sceIoClose(rec_fd);rec_fd=-1;rec_every=0;
+        }
     }
 }

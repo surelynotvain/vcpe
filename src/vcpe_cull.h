@@ -12,6 +12,8 @@
 #endif
 typedef struct { float center[3], extent[3]; int valid; } VcpeCullBox;
 typedef struct { float p[6][4]; int valid; } VcpeCullPlanes;
+/* Prepared planes are immutable snapshots; rebuild after camera/model changes. */
+typedef struct { VcpeCullPlanes planes; float normal_length[6]; int valid; } VcpeCullPrepared;
 typedef struct { uint32_t first, count; VcpeCullBox box; } VcpeCullChunk;
 typedef struct VcpeCullMesh VcpeCullMesh;
 typedef struct { uint32_t bytes, peak_bytes, entries, fallbacks, refits; } VcpeCullCacheStats;
@@ -24,6 +26,8 @@ void vcpe_cull_local_planes(VcpeCullPlanes *out, const VcpeCullPlanes *view, con
 /* 0 outside, 1 intersects/inconclusive, 2 entirely inside. Touching a plane is retained, with roundoff margin. */
 int vcpe_cull_box_test(const VcpeCullPlanes *planes, const VcpeCullBox *box) VCPE_CULL_API;
 int vcpe_cull_sphere_test(const VcpeCullPlanes *planes, const float center[3], float radius) VCPE_CULL_API;
+void vcpe_cull_prepare_planes(VcpeCullPrepared *out,const VcpeCullPlanes *planes) VCPE_CULL_API;
+int vcpe_cull_sphere_prepared(const VcpeCullPrepared *planes,const float center[3],float radius) VCPE_CULL_API;
 void vcpe_cull_box_points(VcpeCullBox *out, const void *verts, uint32_t count) VCPE_CULL_API;
 
 /* Defaults: 512 KiB heap cap, 128 triangles per contiguous chunk. Chunk size rounds up to a multiple of 8

@@ -2,7 +2,7 @@
 
 Link `vcpe_cull` alongside `vcpe_3d` and `vcpe_node3d`. The easy-upgrade module now resolves that dependency
 for 3D projects. The optional module is enabled by default when linked; old clients that omit it still link and
-keep their original drawing path. The engine release version is 5.0.
+keep their original drawing path. The current local engine version remains 5.0.
 
 Bounds are derived from the actual indexed positions. Entirely outside batches are rejected before texture binding
 or GU submission. Intersecting batches are checked in contiguous 128-triangle chunks; adjacent retained ranges
@@ -59,5 +59,5 @@ The tests check 20,000 randomized camera/affine cases against an independent eig
 cases, nonfinite inputs, dynamic LOD invalidation, allocation/budget failures, scene-node registration, changing
 labels and mocked GU submissions. They verify retained range order/coalescing and no binding for wholly rejected
 draws. The module explicitly preserves finite-value checks under the engine's fast-math flags; GCC and Clang
-paths are covered. No in-game replay or physical-console playtest was performed for the culling addition.
+paths are covered. No in-game replay, emulator launch or physical-console playtest was performed for this change.
 Visual correctness and actual frame-time gains remain the playtester's acceptance checks.
