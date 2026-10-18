@@ -29,7 +29,9 @@ DEPS = {'vcpe_savedata': ['vcpe_save'], 'vcpe_prefetch': ['vcpe_pack', 'vcpe_job
         'vcpe_perspective': ['vcpe_math'], 'vcpe_raycast': ['vcpe_math'],
         'vcpe_perspective_draw': ['vcpe_perspective', 'vcpe_gfx'], 'vcpe_skin': ['vcpe_math'],
         'vcpe_path': ['vcpe_math'], 'vcpe_vehicle': ['vcpe_path', 'vcpe_math'], 'vcpe_backdrop': ['vcpe_3d'],
-        'vcpe_canvas': ['vcpe_spr', 'vcpe_gfx']}
+        'vcpe_canvas': ['vcpe_spr', 'vcpe_gfx'],
+        'vcpe_rig': ['vcpe_skin'], 'vcpe_animator': ['vcpe_rig'],
+        'vcpe_terrain_draw': ['vcpe_terrain', 'vcpe_3d'], 'vcpe_sky_draw': ['vcpe_sky', 'vcpe_3d']}
 
 def atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-# Vain's C Portable Engine 5.1
+# Vain's C Portable Engine 5.5
 
 Native C engine modules for PSP homebrew and demakes. Include `src/vcpe.h`, then link the
 modules used by your game through `VCPE_MODULES`. Targets PSPSDK, firmware 6.60; the
@@ -13,6 +13,12 @@ sh blank/build.sh
 This uses the locally installed `ghcr.io/pspdev/pspdev:latest` Podman image and writes
 `blank/EBOOT.PBP`. Copy that EBOOT to `PSP/GAME/VCPE51/` to run it. Left/right changes
 pages; the SAVES page opens native save/load dialogs and previews the loading screen.
+
+5.5 adds an open-world toolkit for large 3D demakes: `vcpe_rig` (compressed skeletal clips, blending, IK,
+root motion, skinned-mesh LOD; `tools/vcpe_rig.py` converts glTF), `vcpe_animator` (layered crossfades, blend
+spaces, foot IK), `vcpe_terrain` (streamed heightfield cells, LOD, relighting; `tools/vcpe_terrain.py`), `vcpe_cells`
+(world streaming, floating origin), `vcpe_collide` (meshes, rays, character controller), `vcpe_sky` (day cycle,
+weather, rain/snow) and `vcpe_crowd` (NPC level of detail). See [upgrading to 5.5](docs/upgrading-to-5.5.md).
 
 5.1 adds real 3D skinning, materials and
 filtering, display-list guards, and new `vcpe_path`, `vcpe_vehicle`, `vcpe_backdrop`, `vcpe_profile`, `vcpe_canvas`

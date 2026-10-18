@@ -1,5 +1,33 @@
 # VCPE changelog
 
+## 5.5 (2026-10-18): open-world toolkit
+
+New opt-in modules for large 3D demakes; existing games build unchanged (only the loading credit now reads
+"made with VCPE 5.5").
+
+- **`vcpe_rig`** + `tools/vcpe_rig.py`: VRG1 skeletons and clips from glTF (6-byte smallest-three rotations,
+  quantised translations, constant tracks stripped), blending, masked/additive layers, two-bone IK, root motion,
+  events; VSM1 skinned meshes with prefix-ordered LOD levels. `vcpe_3d_draw_skinned` (writes skinned vertices back
+  from the data cache first).
+- **`vcpe_animator`**: crossfade stacks that never pop, phase-synced blend spaces, upper-body and additive layers,
+  queued one-shots, update/evaluate split for LOD, foot IK. 160 bytes per bone per character, 18 KiB scratch.
+- **`vcpe_terrain`** (+ `vcpe_terrain_draw`, `tools/vcpe_terrain.py`): geomipmapped heightfield cells with shared
+  index lists, skirts, exact height/normal/ray queries, CPU relighting, overlay texture pass, far grid.
+- **`vcpe_cells`**: predictive cell streaming with hysteresis, caps, time-sliced activation, floating origin,
+  optional vcpe_pack loader.
+- **`vcpe_collide`**: grid-binned instanced triangle meshes, cylinders, ground callback, rays, capsule controller
+  (steps, slopes, snapping, jumps, no tunnelling).
+- **`vcpe_sky`** (+ `vcpe_sky_draw`): sun/moon path, day palettes, blended weather presets, relight serials,
+  stateless rain/snow.
+- **`vcpe_crowd`**: tiers by apparent size with caps and hysteresis, staggered pose/AI ticks, vcpe_adapt scaling.
+- `vcpe_backdrop`: data-cache write-back after build (fixes possible stale geometry), `vcpe_backdrop_recolor`,
+  optional sun disc.
+- `tests/v52/run.sh` (rig, animator, terrain, cells, collide, sky, crowd: 1125 checks, ASan/UBSan), wired into
+  `tests/run.sh`. `tools/vcpe_upgrade.py` knows the new dependencies.
+
+Verification: host suites pass; every new module compiles with psp-gcc 15 `-Wall -Wextra` without warnings. Not
+yet run in an emulator or on PSP hardware; time the new modules on a PSP-1000 before relying on them.
+
 ## 5.1 (2026-10-18): 3D skinning, vehicles, backdrops and profiling
 
 All engine work since 5.0 plus new generic modules. Existing games keep building: new modules are opt-in
