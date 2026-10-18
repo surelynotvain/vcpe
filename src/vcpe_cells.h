@@ -40,7 +40,7 @@ typedef struct {
     const VcpeCellDef *defs;
     int count;
     float cell_size;               /* metres; cell (cx, cz) spans [cx, cx+1) x [cz, cz+1) cells */
-    int radius;                    /* active: Chebyshev cell distance <= radius (Skyrim's uGrids = 2 radius + 1) */
+    int radius;                    /* active: Chebyshev cell distance <= radius */
     int preload;                   /* loaded but asleep: up to radius + preload */
     int keep;                      /* extra distance before sleeping/dropping again (hysteresis) */
     int max_inflight;              /* loads running at once */
