@@ -2,6 +2,7 @@
 #include "vcpe_3d.h"
 #include "vcpe_gfx.h"
 #include "vcpe_math.h"
+#include <pspkernel.h>
 #include <string.h>
 
 #define SKY_SEG 64
@@ -11,6 +12,14 @@ static VcpeVtx sky_v[SKY_SEG * SKY_RINGS + 1] __attribute__((aligned(16)));
 static VcpeVtx ridge_v[2][(RIDGE_SEG + 1) * 3] __attribute__((aligned(16)));
 static uint16_t sky_i[SKY_SEG * (SKY_RINGS - 1) * 6 + SKY_SEG * 3], ridge_i[RIDGE_SEG * 12];
 static int sky_n, layers;
+static float ridge_base[2];   /* height above which a ridge vertex counts as snow cap, per layer (scaled) */
+static VcpeVtx sun_v[4] __attribute__((aligned(16)));
+static const uint16_t sun_i[6] __attribute__((aligned(16))) = {0, 1, 2, 0, 2, 3};
+static uint32_t sun_color;
+static int sun_page = -1;
+
+/* the CPU wrote these through the data cache; the GE reads RAM */
+static void written(const void *p, unsigned n) { sceKernelDcacheWritebackRange(p, n); }
 
 static uint32_t mix(uint32_t a, uint32_t b, float t)
 {
@@ -84,6 +93,69 @@ void vcpe_backdrop_build(const VcpeBackdrop *b)
             uint16_t q[6] = {a, c, a + 1, c, c + 1, a + 1};
             memcpy(ridge_i + n, q, sizeof q); n += 6;
         }
+    ridge_base[0] = 15 * b->height;
+    ridge_base[1] = 11 * b->height;
+    written(sky_v, sizeof sky_v);
+    written(sky_i, sizeof sky_i);
+    written(ridge_v, sizeof ridge_v);
+    written(ridge_i, sizeof ridge_i);
+}
+
+/* the colours vcpe_backdrop_build gives, from the geometry already built (the cap from each peak's height) */
+void vcpe_backdrop_recolor(const VcpeBackdrop *b)
+{
+    static const float elev[SKY_RINGS] = {-30, 0, 10, 30, 60};
+    if (!sky_n)
+        return;
+    for (int r = 0; r < SKY_RINGS; r++) {
+        float t = elev[r] <= 0 ? 0 : elev[r] / 90;
+        uint32_t c = mix(b->haze, b->zenith, vcpe_sqrt(t));
+        for (int i = 0; i < SKY_SEG; i++)
+            sky_v[r * SKY_SEG + i].color = c;
+    }
+    sky_v[SKY_SEG * SKY_RINGS].color = b->zenith;
+    for (int layer = 0; layer < 2; layer++) {
+        float haze = layer ? .45f : .68f;
+        uint32_t rock = mix(b->rock, b->haze, haze), snow = mix(b->snow, b->haze, haze * .6f);
+        for (int i = 0; i <= RIDGE_SEG; i++) {
+            VcpeVtx *v = &ridge_v[layer][i * 3];
+            float cap = vcpe_clampf((v[2].y - ridge_base[layer]) / 6, 0, 1);
+            v[0].color = b->haze;
+            v[1].color = rock;
+            v[2].color = mix(rock, snow, .35f + .65f * cap);
+        }
+    }
+    written(sky_v, sizeof sky_v);
+    written(ridge_v, sizeof ridge_v);
+}
+
+void vcpe_backdrop_sun(const float dir[3], float size_deg, uint32_t color, int page)
+{
+    sun_color = color;
+    sun_page = page;
+    if (!(color >> 24) || !dir)
+        return;
+    float l = vcpe_sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    if (l < 1e-6f) { sun_color = 0; return; }
+    float d[3] = {dir[0] / l, dir[1] / l, dir[2] / l}, up[3] = {0, 1, 0};
+    if (vcpe_absf(d[1]) > 0.99f) { up[0] = 0; up[1] = 0; up[2] = 1; }
+    /* a square facing the camera at the dome's distance, between the dome (150) and the ridges (120..140) */
+    float r[3] = {up[1] * d[2] - up[2] * d[1], up[2] * d[0] - up[0] * d[2], up[0] * d[1] - up[1] * d[0]};
+    float rl = vcpe_sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    for (int k = 0; k < 3; k++) r[k] /= rl;
+    float u[3] = {d[1] * r[2] - d[2] * r[1], d[2] * r[0] - d[0] * r[2], d[0] * r[1] - d[1] * r[0]};
+    float dist = 145, half = dist * vcpe_sin_deg(size_deg * 0.5f);
+    static const float cu[4] = {0, 1, 1, 0}, cv[4] = {0, 0, 1, 1}, sx[4] = {-1, 1, 1, -1}, sy[4] = {1, 1, -1, -1};
+    for (int c = 0; c < 4; c++) {
+        VcpeVtx *v = &sun_v[c];
+        v->u = cu[c];
+        v->v = cv[c];
+        v->color = color;
+        v->x = d[0] * dist + (r[0] * sx[c] + u[0] * sy[c]) * half;
+        v->y = d[1] * dist + (r[1] * sx[c] + u[1] * sy[c]) * half;
+        v->z = d[2] * dist + (r[2] * sx[c] + u[2] * sy[c]) * half;
+    }
+    written(sun_v, sizeof sun_v);
 }
 
 void vcpe_backdrop_draw(const float rot[3], float fov)
@@ -94,6 +166,11 @@ void vcpe_backdrop_draw(const float rot[3], float fov)
     vcpe_3d_fog(0, 0, 0);
     vcpe_3d_begin(origin, rot, fov, 1, 400);
     vcpe_3d_draw(-1, sky_v, sky_i, sky_n);
+    if (sun_color >> 24) {
+        vcpe_3d_material(1, 0);
+        vcpe_3d_draw(sun_page, sun_v, sun_i, 6);
+        vcpe_3d_material(0, 0x20);
+    }
     for (int l = 0; l < layers; l++)
         vcpe_3d_draw(-1, ridge_v[l], ridge_i, RIDGE_SEG * 12);
     vcpe_3d_end();
