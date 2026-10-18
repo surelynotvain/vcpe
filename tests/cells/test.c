@@ -216,6 +216,6 @@ int main(int argc, char **argv)
     }
 
     printf("PASS cells: rings, nearest-first loads, inflight/resident caps, no thrash, lookahead, origin shifts, holes, budgets, retries, packs\n");
-    printf("%d checks, %d failures\n", checks, fails);
+    printf("%d checks, %d failures (%d deactivations)\n", checks, fails, deactivated);
     return fails != 0;
 }

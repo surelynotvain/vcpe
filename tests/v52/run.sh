@@ -5,4 +5,4 @@ H=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 for t in rig animator terrain cells collide sky crowd; do
     sh "$H/$t/run.sh"
 done
-echo 'PASS VCPE 5.2 open-world host suites'
+echo 'PASS VCPE 5.5 open-world host suites'
