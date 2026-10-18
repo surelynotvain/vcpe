@@ -512,7 +512,8 @@ def read_gltf(path, fps=30.0, skin=0, clips='*', loop=(), motion=(), additive=()
                     xf = base[n].then(xf)
                 row.append(xf)
             keys.append(row)
-        if flags & LOOP and frames > 1 and not _same_pose(keys[0], keys[-1]):
+        skip = mb if flags & (MOTION_XZ | MOTION_YAW) else -1      # root motion travels by design
+        if flags & LOOP and frames > 1 and not _same_pose(keys[0], keys[-1], skip):
             keys.append(keys[0])
             duration += 1.0 / fps
             log('note: %s loops; appended its first frame so the cycle closes' % name)
@@ -535,9 +536,9 @@ def _parents_first(order, parent, jset):
     return res
 
 
-def _same_pose(a, b):
-    return all(1 - abs(float(np.dot(x.r, y.r))) < ROT_TOL and np.abs(x.t - y.t).max() < POS_TOL and
-               abs(x.s - y.s) < SCL_TOL for x, y in zip(a, b))
+def _same_pose(a, b, skip=-1):
+    return all(i == skip or (1 - abs(float(np.dot(x.r, y.r))) < ROT_TOL and np.abs(x.t - y.t).max() < POS_TOL and
+                             abs(x.s - y.s) < SCL_TOL) for i, (x, y) in enumerate(zip(a, b)))
 
 
 # ---------------------------------------------------------------- skinned meshes
